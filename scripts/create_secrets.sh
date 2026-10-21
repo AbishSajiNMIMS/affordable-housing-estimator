@@ -24,9 +24,16 @@ read -r -s -p "Scrappa API key (leave empty to skip): " API_KEY; echo
 read -r -s -p "Google Maps Static API key (leave empty to skip): " MAPS_KEY; echo
 read -r -s -p "Admin refresh token (leave empty to generate one): " TOKEN; echo
 if [ -z "$TOKEN" ]; then
-  TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+  # openssl ships with Git Bash on Windows, macOS and Linux; /dev/urandom is the fallback.
+  # (Do not use python3 here: on Windows it can open the Microsoft Store instead.)
+  TOKEN="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   echo "Generated admin refresh token: ${TOKEN}"
   echo "Save it in your password manager; you type it into the website's 'Refresh now' box."
+fi
+
+if [ ${#TOKEN} -lt 16 ]; then
+  echo "Could not create an admin token. Run again and type your own (at least 16 characters)." >&2
+  exit 1
 fi
 
 echo

@@ -1,20 +1,25 @@
+# Works with Python 3.10, 3.11, 3.12 and 3.13 (64-bit).
+# Python 3.14 is NOT supported yet: TensorFlow has no stable release for it.
+# Versions are ranges so pip can pick builds that match your Python version.
+# Tests pass on Python 3.10, 3.11 and 3.13 (TensorFlow 2.21) and 3.12 in Docker.
+
 # Web application
-Flask==3.1.3
-gunicorn==26.2.0          # production web server used in Docker (Linux/macOS only)
-python-dotenv==1.2.4      # loads a local .env file
+Flask>=3.0,<4
+gunicorn>=22.0; sys_platform != "win32"   # production server for Docker/Linux/macOS
+python-dotenv>=1.0,<2                      # loads a local .env file
 
 # Data handling
-numpy==2.5.4
-pandas==3.0.6
-requests==2.34.2
+numpy>=1.26,<3
+pandas>=2.2,<4
+requests>=2.31,<3
 
 # Machine learning
-scikit-learn==1.9.1       # KNN, K-Means, PCA, LDA, preprocessing
-joblib==1.6.0             # saving fitted scikit-learn objects
-# TensorFlow/Keras neural network. The smaller CPU-only build on Linux
-# (Docker, CI); the standard package on macOS and Windows.
-tensorflow-cpu==2.21.0; sys_platform == "linux"
-tensorflow==2.21.0; sys_platform != "linux"
+scikit-learn>=1.5,<2       # KNN, K-Means, PCA, LDA, preprocessing
+joblib>=1.3,<2             # saving fitted scikit-learn objects
+# TensorFlow/Keras neural network: the smaller CPU-only build on Linux
+# (Docker, CI) and the standard package on Windows and macOS.
+tensorflow-cpu>=2.18,<2.22; sys_platform == "linux"
+tensorflow>=2.18,<2.22; sys_platform != "linux"
 
 # Tests
-pytest==9.1.1
+pytest>=8,<10

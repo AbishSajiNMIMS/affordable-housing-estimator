@@ -187,8 +187,12 @@ affordable-housing-estimator/
 
 ## 6. Run it locally (step by step)
 
-You need **Python 3.11-3.13** and Git. (TensorFlow does not yet support the newest Python releases on every
-platform; 3.12 is the safest choice.)
+You need **Python 3.10, 3.11, 3.12 or 3.13** (64-bit) and Git. **Python 3.14 does not work yet**: TensorFlow
+has no stable release for it, and `pip install` fails with
+`No matching distribution found for tensorflow`. Python 3.12 is the safest choice.
+
+Check your version with `python --version`. On Windows, if you have several versions installed, the `py`
+launcher picks one: `py -3.12 -m venv .venv`. Get Python 3.12 from https://www.python.org/downloads/ if needed.
 
 ```bash
 # 1. Clone
@@ -196,8 +200,8 @@ git clone https://github.com/<your-user>/affordable-housing-estimator.git
 cd affordable-housing-estimator
 
 # 2. Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate            # Windows PowerShell: .venv\Scripts\Activate.ps1
+python3 -m venv .venv                # Windows: py -3.12 -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
 
 # 3. Install dependencies (TensorFlow is a large download, a few minutes)
 pip install --upgrade pip
@@ -506,7 +510,7 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 | Problem | Fix |
 |---|---|
 | Page says "The estimator is not ready yet" | Run `python train_model.py`, then restart the app. |
-| `pip install` fails on TensorFlow | Use Python 3.11-3.12 (64-bit). On Apple Silicon use the native arm64 Python. |
+| `No matching distribution found for tensorflow` | Your Python is too new (3.14) or 32-bit. Install 64-bit Python 3.12, delete the `.venv` folder, recreate it with `py -3.12 -m venv .venv` (Windows) or `python3.12 -m venv .venv`, then reinstall. On Apple Silicon use the native arm64 Python. |
 | "Live data is not configured" | Set `SCRAPPA_API_KEY` in `.env` (local) or create the secret and redeploy (AWS). |
 | "API key rejected (HTTP 401/403)" | Wrong key, or e-mail not verified at Scrappa. |
 | "No API credits left (HTTP 402)" | Wait for the monthly free credits or buy a pack; the app keeps showing cached data. |

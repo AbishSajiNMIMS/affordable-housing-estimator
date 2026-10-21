@@ -65,6 +65,11 @@ class Estimator:
         self.city = city
         self.spec = config.CITIES[city]
         self.dir = str(artifacts_dir or config.city_artifacts_dir(city))
+        legacy = str(config.ARTIFACTS_DIR)
+        if (artifacts_dir is None and city == "bengaluru" and not os.path.exists(os.path.join(self.dir, "metrics.json"))
+                and all(os.path.exists(os.path.join(legacy, f)) for f in ARTIFACT_FILES)):
+            # Models trained before cities existed were saved straight into artifacts/.
+            self.dir = legacy
         missing = [f for f in ARTIFACT_FILES if not os.path.exists(os.path.join(self.dir, f))]
         if missing:
             raise ModelNotReady(f"{self.spec['name']} model is not trained yet (missing {missing}). "

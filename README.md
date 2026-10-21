@@ -572,7 +572,7 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 
 | Problem | Fix |
 |---|---|
-| Page says "The estimator is not ready yet" | Run `python train_model.py`, then restart the app. |
+| Page says "The estimator is not ready yet" or "Bengaluru is not set up" | Run `python train_model.py --all`, then restart the app. |
 | "Mumbai is not set up on this server yet" | Follow [section 7b](#7b-mumbai-current-housingcom-listings-via-apify): set `APIFY_TOKEN`, run `apify_fetcher.py`, then `train_model.py --city mumbai`, restart. |
 | `APIFY_TOKEN is not set` | Add `APIFY_TOKEN=...` to `.env` in the project folder (same folder as `app.py`). |
 | "Apify token rejected (HTTP 401)" / "Not enough Apify credit (HTTP 402)" | Copy the token again from the Apify console / wait for next month's free credit. |

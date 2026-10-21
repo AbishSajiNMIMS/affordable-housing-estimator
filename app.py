@@ -163,9 +163,8 @@ def index():
     city = selected_city(request.values)
     est = get_estimator(city)
     if est is None:
-        if city == config.DEFAULT_CITY:
-            return render_template("unavailable.html"), 503
-        # Another city without a trained model: explain how to set it up.
+        # No trained model for this city: explain how to set it up, and keep
+        # the city selector so any city that is ready can still be used.
         return render_template("city_not_ready.html", **page_context(city)), 503
     if request.method == "GET":
         return render_template("index.html", **page_context(city))

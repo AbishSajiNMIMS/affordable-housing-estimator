@@ -242,3 +242,25 @@ def test_bengaluru_page_has_city_switch(client):
 def test_unknown_city_falls_back_to_bengaluru(client):
     resp = client.get("/?city=atlantis")
     assert resp.status_code == 200 and "Bengaluru" in resp.get_data(as_text=True)
+
+
+def test_bengaluru_not_ready_keeps_city_selector(client, mumbai_artifacts, mumbai_dir, tmp_path, monkeypatch):
+    # Only Mumbai trained: the home page explains Bengaluru and still offers Mumbai.
+    empty = tmp_path / "only-mumbai"
+    import shutil
+    shutil.copytree(mumbai_artifacts, empty / "mumbai")
+    monkeypatch.setattr(config, "ARTIFACTS_DIR", empty)
+    resp = client.get("/")
+    assert resp.status_code == 503
+    html = resp.get_data(as_text=True)
+    assert "train_model.py --all" in html and 'id="city-select"' in html
+    assert client.get("/?city=mumbai").status_code == 200
+
+
+def test_legacy_bengaluru_artifacts_still_load(artifacts_dir, tmp_path, monkeypatch):
+    # Models trained before per-city folders lived directly in artifacts/.
+    import shutil
+    from estimator import Estimator
+    shutil.copytree(artifacts_dir, tmp_path / "old")
+    monkeypatch.setattr(config, "ARTIFACTS_DIR", tmp_path / "old")
+    assert Estimator("bengaluru").dir == str(tmp_path / "old")

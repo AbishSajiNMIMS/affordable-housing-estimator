@@ -195,10 +195,10 @@ affordable-housing-estimator/
 
 You need **Python 3.10, 3.11, 3.12 or 3.13** (64-bit) and Git. **Python 3.14 does not work yet**: TensorFlow
 has no stable release for it, and `pip install` fails with
-`No matching distribution found for tensorflow`. Python 3.12 is the safest choice.
+`No matching distribution found for tensorflow`. On Windows use Python 3.13 (python.org offers a current 3.13 installer; 3.12 no longer has one).
 
 Check your version with `python --version`. On Windows, if you have several versions installed, the `py`
-launcher picks one: `py -3.12 -m venv .venv`. Get Python 3.12 from https://www.python.org/downloads/ if needed.
+launcher picks one: `py -3.13 -m venv .venv`. Get Python 3.13 from https://www.python.org/downloads/ if needed.
 
 ```bash
 # 1. Clone
@@ -206,7 +206,7 @@ git clone https://github.com/<your-user>/affordable-housing-estimator.git
 cd affordable-housing-estimator
 
 # 2. Create and activate a virtual environment
-python3 -m venv .venv                # Windows: py -3.12 -m venv .venv
+python3 -m venv .venv                # Windows: py -3.13 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 
 # 3. Install dependencies (TensorFlow is a large download, a few minutes)
@@ -615,7 +615,7 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 | No maps on the cards | `GOOGLE_MAPS_API_KEY` is not set, or Maps Static API is not enabled for the key. The server log says "Map not available … (HTTP 403)" in the second case. |
 | No photos on Mumbai cards | Run `python apify_fetcher.py --from-cache` then `python train_model.py --city mumbai`. Some listings have no photo. |
 | `Only N valid Mumbai listings; need at least 300` | Fetch more: `python apify_fetcher.py --max 1000 --force`. |
-| `No matching distribution found for tensorflow` | Your Python is too new (3.14) or 32-bit. Install 64-bit Python 3.12, delete the `.venv` folder, recreate it with `py -3.12 -m venv .venv` (Windows) or `python3.12 -m venv .venv`, then reinstall. On Apple Silicon use the native arm64 Python. |
+| `No matching distribution found for tensorflow` | Your Python is too new (3.14) or 32-bit. Install 64-bit Python 3.13, delete the `.venv` folder, recreate it with `py -3.13 -m venv .venv` (Windows) or `python3.13 -m venv .venv`, then reinstall. On Apple Silicon use the native arm64 Python. |
 | "Live data is not configured" | Set `SCRAPPA_API_KEY` in `.env` (local) or create the secret and redeploy (AWS). |
 | "API key rejected (HTTP 401/403)" | Wrong key, or e-mail not verified at Scrappa. |
 | "No API credits left (HTTP 402)" | Wait for the monthly free credits or buy a pack; the app keeps showing cached data. |

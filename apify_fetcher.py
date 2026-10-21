@@ -155,7 +155,7 @@ def _photo_url(item: dict) -> str:
             value = value.get("url") or value.get("src")
         url = _https_url(value)
         if url:
-            return url
+            return housing_data.housing_photo_url(url)
     return ""
 
 

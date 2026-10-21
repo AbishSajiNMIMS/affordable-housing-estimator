@@ -16,6 +16,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
 import config
+from housing_data import housing_photo_url
 from train_model import CLUSTER_FEATURES, PRICE_BANDS, city_features
 
 # Features used to measure "similar" properties (Bengaluru; each city's list
@@ -154,7 +155,7 @@ class Estimator:
                 "price_per_sqft": int(round(row["price_lakh"] * 100_000 / row["area_sqft"])),
                 "source": row["source"],
                 "source_url": row["source_url"] if isinstance(row["source_url"], str) else "",
-                "photo_url": row.get("photo_url") if isinstance(row.get("photo_url"), str) else "",
+                "photo_url": housing_photo_url(row.get("photo_url")),
                 "retrieved_at": row["retrieved_at"],
                 "distance": round(float(dist), 3),
                 "same_locality": len(same) >= k,

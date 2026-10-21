@@ -7,6 +7,24 @@
   <meta name="description" content="Indicative machine-learning price estimates for residential property in Bengaluru and Mumbai, India.">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-5.3.3.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script>
+    // Defined early because image errors can fire before the page finishes loading.
+    // A failed listing photo is replaced by the locality map (if maps are on), otherwise hidden.
+    function mediaFallback(img) {
+      var next = img.getAttribute("data-fallback");
+      if (next) {
+        img.removeAttribute("data-fallback");
+        img.alt = "Map of the area";
+        img.removeAttribute("referrerpolicy");
+        var label = img.parentNode.querySelector(".media-label");
+        if (label) label.textContent = img.getAttribute("data-fallback-label") || "Area map";
+        img.src = next;
+      } else {
+        var box = img.closest(".listing-media");
+        if (box) box.remove();
+      }
+    }
+  </script>
 </head>
 <body>
   <nav class="navbar navbar-dark bg-brand">

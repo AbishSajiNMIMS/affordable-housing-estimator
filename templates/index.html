@@ -170,13 +170,16 @@
               {% if s.photo_url %}
               <div class="listing-media">
                 <img src="{{ s.photo_url }}" class="card-img-top" alt="Listing photo, {{ s.locality }}" loading="lazy"
-                     referrerpolicy="no-referrer" onerror="this.closest('.listing-media').remove()">
+                     referrerpolicy="no-referrer"
+                     {% if maps_enabled %}data-fallback="{{ url_for('area_map', city=city, locality=s.locality) }}"
+                     data-fallback-label="Area: {{ s.locality }} (not the exact home)"{% endif %}
+                     onerror="mediaFallback(this)">
                 <span class="media-label">Listing photo</span>
               </div>
               {% elif maps_enabled %}
               <div class="listing-media">
                 <img src="{{ url_for('area_map', city=city, locality=s.locality) }}" class="card-img-top"
-                     alt="Map of {{ s.locality }}" loading="lazy" onerror="this.closest('.listing-media').remove()">
+                     alt="Map of {{ s.locality }}" loading="lazy" onerror="mediaFallback(this)">
                 <span class="media-label">Area: {{ s.locality }} (not the exact home)</span>
               </div>
               {% endif %}

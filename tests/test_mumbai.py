@@ -328,3 +328,19 @@ def test_photo_from_list_or_nested_field():
     b.pop("photo_url"); b["images"] = ["https://img.example/b.jpg"]
     df, _ = apify_fetcher.normalise_items([a, b], "mumbai", RETRIEVED)
     assert list(df["photo_url"]) == ["https://img.example/a.jpg", "https://img.example/b.jpg"]
+
+
+def test_housing_photo_version_placeholder_is_replaced():
+    from housing_data import housing_photo_url
+
+    raw = "https://is1-3.housingcdn.com/01c16c28/abc/v0/version/1_bhk_apartment.jpg"
+    assert housing_photo_url(raw) == "https://is1-3.housingcdn.com/01c16c28/abc/v0/medium/1_bhk_apartment.jpg"
+    assert housing_photo_url("https://img.example/version/x.jpg") == "https://img.example/version/x.jpg"
+    assert housing_photo_url(float("nan")) == ""
+
+
+def test_photo_falls_back_to_map_when_maps_on(client, mumbai_artifacts, mumbai_dir, monkeypatch):
+    monkeypatch.setattr(config, "GOOGLE_MAPS_API_KEY", "test-maps-key")
+    html = client.post("/", data={"city": "mumbai", "locality": "Powai", "area_sqft": "900", "bedrooms": "2",
+                                  "property_type": "Apartment"}).get_data(as_text=True)
+    assert 'data-fallback="/area-map?city=mumbai' in html and "test-maps-key" not in html

@@ -7,6 +7,7 @@ import pandas as pd
 import requests
 
 import config
+from housing_data import housing_photo_url
 
 
 def check_maps():
@@ -56,13 +57,14 @@ def check_photos():
     if len(with_photo) == 0:
         print("The Apify data had no photo links (checked fields: photo_url, image, image_url, thumbnail, cover_image, photos, images).")
         return
-    url = with_photo.iloc[0]
+    url = housing_photo_url(with_photo.iloc[0])
     try:
         resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
         kind = resp.headers.get("Content-Type", "")
         print(f"Example photo: HTTP {resp.status_code}, {kind or 'no content type'}  {url[:90]}")
         if resp.status_code != 200 or not kind.startswith("image/"):
-            print("Housing.com did not return an image for this link, so browsers will not show it either.")
+            print("Housing.com did not return an image for this link, so browsers will not show it either. "
+                  "The cards fall back to the area map when a photo fails.")
     except requests.RequestException as exc:
         print(f"Could not load the example photo: {exc.__class__.__name__}")
 

@@ -110,6 +110,16 @@ def normalise_area_type(value) -> str:
     return text if text in AREA_TYPES else "Super built-up Area"
 
 
+def housing_photo_url(url) -> str:
+    """Housing.com photo links contain a "/version/" placeholder that its
+    website swaps for an image size; the CDN answers the raw link with HTTP 417.
+    Ask for the "medium" size instead. Other links are returned unchanged."""
+    text = str(url or "") if isinstance(url, str) else ""
+    if "housingcdn.com/" in text and "/version/" in text:
+        text = text.replace("/version/", "/medium/", 1)
+    return text
+
+
 def normalise_locality(value) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     return text.title() if text else ""

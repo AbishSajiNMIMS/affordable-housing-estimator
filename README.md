@@ -342,10 +342,11 @@ The website itself never calls Apify.
 exists in your folder when you build. So fetch locally first, then run `scripts/deploy_ecs.sh` again. A GitHub
 Actions deploy does not have that file (it is not in Git), so Mumbai will show "not set up" there.
 
-**Not verified yet:** the Apify actor publishes no formal output schema. The parser follows the field names on
-the actor's page (`price`, `price_label`, `area_sqft`, `carpet_area_sqft`, `bhk`, `address`, `property_type`,
-`listing_url`, `scraped_at`) and is tested with sample data of that shape, not with a real run. After your first
-fetch, check the "Rejected" counts the script prints; if almost everything is rejected, the field names differ.
+**Verified with a real run (21 Oct 2026):** `python apify_fetcher.py --max 1000` with a real token received
+1,001 Mumbai listings; 962 passed validation and were saved, 39 were rejected (38 with no bedroom count, for
+example plots or listings without a BHK figure, and 1 with no listing id). The actor publishes no formal output
+schema, so if Apify changes its field names the "Rejected" counts the script prints will jump; check them after
+each fetch.
 
 ## 8. Model training and evaluation
 

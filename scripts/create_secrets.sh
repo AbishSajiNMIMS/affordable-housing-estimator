@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Store the optional Scrappa API key and admin refresh token in AWS Secrets
+# Store the optional Scrappa API key, Google Maps key and admin refresh token in AWS Secrets
 # Manager, and print the ARNs to pass to deploy_ecs.sh.
 #
 # Usage:
@@ -21,6 +21,7 @@ upsert() {  # name value
 }
 
 read -r -s -p "Scrappa API key (leave empty to skip): " API_KEY; echo
+read -r -s -p "Google Maps Static API key (leave empty to skip): " MAPS_KEY; echo
 read -r -s -p "Admin refresh token (leave empty to generate one): " TOKEN; echo
 if [ -z "$TOKEN" ]; then
   TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
@@ -31,6 +32,9 @@ fi
 echo
 if [ -n "$API_KEY" ]; then
   echo "export SCRAPPA_SECRET_ARN=$(upsert "${PREFIX}/scrappa-api-key" "$API_KEY")"
+fi
+if [ -n "$MAPS_KEY" ]; then
+  echo "export GOOGLE_MAPS_SECRET_ARN=$(upsert "${PREFIX}/google-maps-key" "$MAPS_KEY")"
 fi
 echo "export REFRESH_TOKEN_SECRET_ARN=$(upsert "${PREFIX}/refresh-token" "$TOKEN")"
 echo

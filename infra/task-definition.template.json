@@ -32,7 +32,8 @@
       ],
       "secrets": [
         { "name": "SCRAPPA_API_KEY", "valueFrom": "${SCRAPPA_SECRET_ARN}" },
-        { "name": "REFRESH_TOKEN", "valueFrom": "${REFRESH_TOKEN_SECRET_ARN}" }
+        { "name": "REFRESH_TOKEN", "valueFrom": "${REFRESH_TOKEN_SECRET_ARN}" },
+        { "name": "GOOGLE_MAPS_API_KEY", "valueFrom": "${GOOGLE_MAPS_SECRET_ARN}" }
       ],
       "mountPoints": [{ "sourceVolume": "live-data", "containerPath": "/app/data/live", "readOnly": false }],
       "logConfiguration": {

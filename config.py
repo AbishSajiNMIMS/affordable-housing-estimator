@@ -104,6 +104,14 @@ def city_artifacts_dir(city: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Area maps (Google Maps Static API) - optional
+# ---------------------------------------------------------------------------
+# The key stays on the server: the browser asks /area-map and the server
+# fetches the image from Google, caches it and serves it.
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+
+
+# ---------------------------------------------------------------------------
 # Live listings (Scrappa 99acres API) - optional
 # ---------------------------------------------------------------------------
 SCRAPPA_API_KEY = os.getenv("SCRAPPA_API_KEY", "").strip()

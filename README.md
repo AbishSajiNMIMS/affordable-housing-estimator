@@ -29,6 +29,7 @@ without any cloud account, and deploys to AWS ECS Fargate with the files in this
 6. [Run it locally (step by step)](#6-run-it-locally-step-by-step)
 7. [Live data: API, caching and refresh](#7-live-data-api-caching-and-refresh)
    - [Mumbai: current Housing.com listings via Apify](#7b-mumbai-current-housingcom-listings-via-apify)
+   - [Photos and area maps](#7c-photos-and-area-maps)
 8. [Model training and evaluation](#8-model-training-and-evaluation)
 9. [Tests](#9-tests)
 10. [Docker](#10-docker)
@@ -167,6 +168,7 @@ affordable-housing-estimator/
 ├── housing_data.py         schema, parsing ("1133 - 1384" sq ft, "2 BHK"), validation rules
 ├── data_fetcher.py         Scrappa 99acres client: retries, validation, dedupe, cache, status
 ├── apify_fetcher.py        Mumbai: Apify Housing.com scraper client (same safeguards)
+├── area_maps.py            optional locality maps (Google Static Maps, key kept server-side)
 ├── config.py               every setting, overridable with environment variables
 ├── requirements.txt        pinned Python dependencies
 ├── Dockerfile              python:3.12-slim + gunicorn; trains during build
@@ -347,6 +349,38 @@ Actions deploy does not have that file (it is not in Git), so Mumbai will show "
 example plots or listings without a BHK figure, and 1 with no listing id). The actor publishes no formal output
 schema, so if Apify changes its field names the "Rejected" counts the script prints will jump; check them after
 each fetch.
+
+## 7c. Photos and area maps
+
+Each of the 3 similar properties is shown as a card with a picture:
+
+* **Mumbai listing photo.** The Apify data includes a `photo_url` for many listings. The card shows that photo,
+  loaded by the visitor's browser straight from Housing.com, with a link to the listing. If the photo cannot
+  load, the card simply shows no picture. Listings fetched before photos were kept can get them **without
+  spending Apify credit**:
+  ```bash
+  python apify_fetcher.py --from-cache      # re-reads data/mumbai/raw_cache/apify_mumbai_latest.json
+  python train_model.py --city mumbai
+  ```
+* **Area map (both cities, optional).** When there is no photo, the card shows a small Google map of the
+  **locality**, labelled "Area: … (not the exact home)". The datasets have no exact addresses, so the map never
+  claims to show the house itself.
+
+**Getting a Google Maps key (optional):**
+
+1. Open <https://console.cloud.google.com/google/maps-apis>, create a project and enable **Maps Static API**
+   (Google asks for a billing account; the monthly free usage is far more than this site needs).
+2. **Keys & Credentials → Create credentials → API key**. Then **Edit API key → API restrictions → Maps Static API**.
+3. Put it in `.env` as `GOOGLE_MAPS_API_KEY=...` and restart the app.
+
+**The key stays on the server.** The page asks `/area-map?city=…&locality=…`; the Flask server fetches the image
+from Google, saves it in `data/live/map_cache/` and serves it. The browser never sees the key, only localities
+known to the model are accepted (so nobody can use your key for other maps), and each locality is fetched once.
+Without a key, the cards show no maps and everything else works.
+
+**On AWS:** run `scripts/create_secrets.sh` again and paste the Google key when asked (input is hidden). Copy
+the printed `export GOOGLE_MAPS_SECRET_ARN=...` line, then run `scripts/deploy_ecs.sh`. The key is stored in
+AWS Secrets Manager and given to the container as an environment variable.
 
 ## 8. Model training and evaluation
 
@@ -576,6 +610,8 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 | "Mumbai is not set up on this server yet" | Follow [section 7b](#7b-mumbai-current-housingcom-listings-via-apify): set `APIFY_TOKEN`, run `apify_fetcher.py`, then `train_model.py --city mumbai`, restart. |
 | `APIFY_TOKEN is not set` | Add `APIFY_TOKEN=...` to `.env` in the project folder (same folder as `app.py`). |
 | "Apify token rejected (HTTP 401)" / "Not enough Apify credit (HTTP 402)" | Copy the token again from the Apify console / wait for next month's free credit. |
+| No maps on the cards | `GOOGLE_MAPS_API_KEY` is not set, or Maps Static API is not enabled for the key. The server log says "Map not available … (HTTP 403)" in the second case. |
+| No photos on Mumbai cards | Run `python apify_fetcher.py --from-cache` then `python train_model.py --city mumbai`. Some listings have no photo. |
 | `Only N valid Mumbai listings; need at least 300` | Fetch more: `python apify_fetcher.py --max 1000 --force`. |
 | `No matching distribution found for tensorflow` | Your Python is too new (3.14) or 32-bit. Install 64-bit Python 3.12, delete the `.venv` folder, recreate it with `py -3.12 -m venv .venv` (Windows) or `python3.12 -m venv .venv`, then reinstall. On Apple Silicon use the native arm64 Python. |
 | "Live data is not configured" | Set `SCRAPPA_API_KEY` in `.env` (local) or create the secret and redeploy (AWS). |

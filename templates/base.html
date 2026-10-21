@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Affordable Housing Price Estimator{% endblock %}</title>
-  <meta name="description" content="Indicative machine-learning price estimates for residential property in Bengaluru, India.">
+  <meta name="description" content="Indicative machine-learning price estimates for residential property in Bengaluru and Mumbai, India.">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-5.3.3.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
   <nav class="navbar navbar-dark bg-brand">
     <div class="container">
-      <a class="navbar-brand fw-semibold" href="{{ url_for('index') }}">🏠 Affordable Housing Price Estimator</a>
+      <a class="navbar-brand fw-semibold text-wrap" href="{{ url_for('index') }}">🏠 Affordable Housing Price Estimator</a>
       <span class="navbar-text small d-none d-md-inline">FOML student mini-project</span>
     </div>
   </nav>

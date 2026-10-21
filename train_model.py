@@ -152,8 +152,9 @@ def load_live_for_training() -> pd.DataFrame:
     live["balconies"] = live["balconies"].fillna(live["bedrooms"].clip(upper=3) - 1)
     live["area_type"] = live["area_type"].fillna("Super built-up Area")
     live["ready_to_move"] = live["ready_to_move"].fillna(1)
-    if "property_type" not in live.columns:  # files saved before this column existed
-        live["property_type"] = ""
+    for col in ("property_type", "photo_url"):  # files saved before these columns existed
+        if col not in live.columns:
+            live[col] = ""
     live["source"] = live["source"] + " (asking price; some features imputed)"
     return live
 

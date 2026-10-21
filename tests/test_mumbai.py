@@ -264,3 +264,59 @@ def test_legacy_bengaluru_artifacts_still_load(artifacts_dir, tmp_path, monkeypa
     shutil.copytree(artifacts_dir, tmp_path / "old")
     monkeypatch.setattr(config, "ARTIFACTS_DIR", tmp_path / "old")
     assert Estimator("bengaluru").dir == str(tmp_path / "old")
+
+
+# ---------------------------------------------------------------------------
+# Photos and area maps
+# ---------------------------------------------------------------------------
+def test_photo_urls_kept_only_when_https():
+    items = make_apify_items(3)
+    items[0]["photo_url"] = "javascript:alert(1)"
+    items[1]["photo_url"] = "https://img.example/x.jpg"
+    df, _ = apify_fetcher.normalise_items(items, "mumbai", RETRIEVED)
+    photos = df.set_index("property_id")["photo_url"]
+    assert photos["housing-T0"] == "" and photos["housing-T1"] == "https://img.example/x.jpg"
+
+
+def test_rebuild_from_cache_adds_photos_without_api(mumbai_dir, token):
+    apify_fetcher.refresh("mumbai", session=FakeApify(make_apify_items(10)))
+    # Simulate a CSV saved by the older version, which had no photo column.
+    path = mumbai_dir / "housing_com_mumbai.csv"
+    pd.read_csv(path).drop(columns=["photo_url"]).to_csv(path, index=False)
+    result = apify_fetcher.rebuild_from_cache("mumbai")
+    assert result["ok"] and "No Apify credit used" in result["message"]
+    assert (pd.read_csv(path)["photo_url"].fillna("") != "").sum() > 0
+
+
+def test_mumbai_cards_show_listing_photos(client, mumbai_artifacts, mumbai_dir):
+    html = client.post("/", data={"city": "mumbai", "locality": "Powai", "area_sqft": "900", "bedrooms": "2",
+                                  "property_type": "Apartment"}).get_data(as_text=True)
+    assert "housingcdn.com/test/" in html and "Listing photo" in html
+
+
+def test_area_map_needs_key_and_known_locality(client, monkeypatch, tmp_path):
+    import area_maps
+
+    monkeypatch.setattr(config, "GOOGLE_MAPS_API_KEY", "")
+    assert client.get("/area-map?city=bengaluru&locality=Whitefield").status_code == 404
+
+    calls = []
+
+    class FakeGoogle:
+        def get(self, url, params=None, timeout=None):
+            calls.append(params)
+            return type("R", (), {"status_code": 200, "headers": {"Content-Type": "image/png"},
+                                  "content": b"\x89PNG fake"})()
+
+    monkeypatch.setattr(config, "GOOGLE_MAPS_API_KEY", "test-maps-key")
+    monkeypatch.setattr(area_maps, "requests", FakeGoogle())
+    ok = client.get("/area-map?city=bengaluru&locality=whitefield")
+    assert ok.status_code == 200 and ok.data == b"\x89PNG fake"
+    assert calls[0]["center"] == "Whitefield, Bengaluru, India"
+    client.get("/area-map?city=bengaluru&locality=Whitefield")
+    assert len(calls) == 1  # second request served from the cache
+    assert client.get("/area-map?city=bengaluru&locality=Somewhere%20Else").status_code == 404
+    # The key never reaches the page.
+    page = client.post("/", data={"locality": "Whitefield", "area_sqft": "1200", "bedrooms": "2",
+                                  "bathrooms": "2", "balconies": "1"}).get_data(as_text=True)
+    assert "/area-map?city=bengaluru" in page and "test-maps-key" not in page

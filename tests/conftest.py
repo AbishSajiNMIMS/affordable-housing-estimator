@@ -45,6 +45,7 @@ def make_apify_items(n=400, seed=0):
             "address": f"Test Tower {i}, {loc}, Mumbai, Maharashtra 400001",
             "city": "Mumbai",
             "listing_url": f"https://housing.com/in/buy/resale/page/test-{i}",
+            "photo_url": f"https://is1-3.housingcdn.com/test/{i}.jpg" if i % 3 else None,
             "scraped_at": "2026-10-21T06:00:00Z",
         })
     return items

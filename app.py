@@ -7,6 +7,7 @@ Routes
   GET  /?city=mumbai  form for one city (and results after a POST)
   POST /              estimate a property ("city" is a form field)
   POST /api/estimate  same as above, JSON in / JSON out
+  GET  /area-map      locality map image (only if GOOGLE_MAPS_API_KEY is set)
   POST /refresh       refresh live listings (needs REFRESH_TOKEN)
   GET  /health        health check for Docker and the ECS load balancer
 """
@@ -16,10 +17,11 @@ import hmac
 import logging
 from datetime import datetime
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, url_for
 
-import config
 import apify_fetcher
+import area_maps
+import config
 import data_fetcher
 from estimator import Estimator, ModelNotReady
 
@@ -144,6 +146,7 @@ def page_context(city: str, **extra):
         "localities": est.localities if est else [],
         "pca_points": est.pca_points if est else None,
         "live": data_fetcher.data_state(),
+        "maps_enabled": area_maps.enabled(),
         "refresh_enabled": bool(config.REFRESH_TOKEN and config.SCRAPPA_API_KEY),
         "config": config,
         "form": {},
@@ -192,6 +195,19 @@ def api_estimate():
                     "training_data": est.metrics["dataset"].get("source"),
                     "live_data": data_fetcher.data_state() if city == "bengaluru" else None,
                     "disclaimer": "Indicative machine-learning estimate, not an official valuation."})
+
+
+@app.get("/area-map")
+def area_map():
+    city = selected_city(request.args)
+    est = get_estimator(city)
+    locality = est.canonical_locality(request.args.get("locality", "")) if est else None
+    if not locality:  # only localities the model knows, so the key cannot be misused
+        abort(404)
+    png = area_maps.get_map_png(config.CITIES[city]["name"], locality)
+    if png is None:
+        abort(404)
+    return Response(png, mimetype="image/png", headers={"Cache-Control": "public, max-age=604800"})
 
 
 @app.post("/refresh")

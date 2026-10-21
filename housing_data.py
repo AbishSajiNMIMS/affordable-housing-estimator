@@ -5,7 +5,7 @@ for live listings fetched from the API, so both end up in one schema:
 
     property_id, city, locality, area_sqft, bedrooms, bathrooms, balconies,
     area_type, ready_to_move, property_type, price_lakh, price_per_sqft,
-    source, source_url, retrieved_at
+    source, source_url, photo_url, retrieved_at
 
 Columns a source does not report are left empty (for example Mumbai
 listings have no bathroom or balcony counts).
@@ -34,6 +34,7 @@ SCHEMA = [
     "price_per_sqft",
     "source",
     "source_url",
+    "photo_url",
     "retrieved_at",
 ]
 
@@ -183,6 +184,7 @@ def load_training_dataset(path=None, city: str = "bengaluru") -> tuple[pd.DataFr
             "price_lakh": pd.to_numeric(raw["price"], errors="coerce"),
             "source": config.TRAINING_SOURCE_NAME,
             "source_url": config.TRAINING_SOURCE_URL,
+            "photo_url": "",
             "retrieved_at": "historical (collection date not documented; ~2017-18)",
         }
     )
@@ -225,6 +227,8 @@ def load_listings_dataset(path, city: str) -> tuple[pd.DataFrame, dict]:
         raise FileNotFoundError(
             f"No training data for {spec['name']} at {path}. Get it with: {spec['how_to_get_data']}"
         ) from None
+    if "photo_url" not in raw.columns:  # files saved before photos were kept
+        raw["photo_url"] = ""
     missing = set(SCHEMA) - set(raw.columns) - {"price_per_sqft"}
     if missing:
         raise ValueError(f"{path} is missing columns: {sorted(missing)}")

@@ -32,6 +32,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Optional. ARN of a Secrets Manager secret holding the admin refresh token (plain text).
+  GoogleMapsKeySecretArn:
+    Type: String
+    Default: ""
+    Description: Optional. ARN of a Secrets Manager secret holding a Google Maps Static API key (plain text).
   LiveCities:
     Type: String
     Default: bangalore
@@ -50,7 +54,8 @@ Parameters:
 Conditions:
   HasApiKey: !Not [!Equals [!Ref ScrappaApiKeySecretArn, ""]]
   HasRefreshToken: !Not [!Equals [!Ref RefreshTokenSecretArn, ""]]
-  HasAnySecret: !Or [!Condition HasApiKey, !Condition HasRefreshToken]
+  HasMapsKey: !Not [!Equals [!Ref GoogleMapsKeySecretArn, ""]]
+  HasAnySecret: !Or [!Condition HasApiKey, !Condition HasRefreshToken, !Condition HasMapsKey]
   HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
 
 Resources:
@@ -262,6 +267,7 @@ Resources:
             Resource:
               - !If [HasApiKey, !Ref ScrappaApiKeySecretArn, !Ref "AWS::NoValue"]
               - !If [HasRefreshToken, !Ref RefreshTokenSecretArn, !Ref "AWS::NoValue"]
+              - !If [HasMapsKey, !Ref GoogleMapsKeySecretArn, !Ref "AWS::NoValue"]
 
   # Task role: permissions of the running application (EFS access only).
   TaskRole:
@@ -334,6 +340,10 @@ Resources:
             - !If
               - HasRefreshToken
               - { Name: REFRESH_TOKEN, ValueFrom: !Ref RefreshTokenSecretArn }
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasMapsKey
+              - { Name: GOOGLE_MAPS_API_KEY, ValueFrom: !Ref GoogleMapsKeySecretArn }
               - !Ref "AWS::NoValue"
           MountPoints:
             - { SourceVolume: live-data, ContainerPath: /app/data/live, ReadOnly: false }

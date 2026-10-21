@@ -154,6 +154,7 @@ class Estimator:
                 "price_per_sqft": int(round(row["price_lakh"] * 100_000 / row["area_sqft"])),
                 "source": row["source"],
                 "source_url": row["source_url"] if isinstance(row["source_url"], str) else "",
+                "photo_url": row.get("photo_url") if isinstance(row.get("photo_url"), str) else "",
                 "retrieved_at": row["retrieved_at"],
                 "distance": round(float(dist), 3),
                 "same_locality": len(same) >= k,

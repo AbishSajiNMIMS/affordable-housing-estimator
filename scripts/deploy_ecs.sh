@@ -10,7 +10,7 @@
 #   STACK_NAME        (default: housing-estimator)
 #   ECR_REPOSITORY    (default: affordable-housing-estimator)
 #   IMAGE_TAG         (default: current git commit, or a timestamp)
-#   SCRAPPA_SECRET_ARN, REFRESH_TOKEN_SECRET_ARN  (from scripts/create_secrets.sh)
+#   SCRAPPA_SECRET_ARN, REFRESH_TOKEN_SECRET_ARN, GOOGLE_MAPS_SECRET_ARN  (from scripts/create_secrets.sh)
 #   AUTO_REFRESH_HOURS (default: 0 = off), LIVE_CITIES (default: bangalore)
 #   CERTIFICATE_ARN   (optional ACM certificate for HTTPS)
 set -euo pipefail
@@ -51,6 +51,7 @@ PARAMS=("ImageUri=${IMAGE_URI}")
 [ -n "${AUTO_REFRESH_HOURS:-}" ] && PARAMS+=("AutoRefreshHours=${AUTO_REFRESH_HOURS}")
 [ -n "${SCRAPPA_SECRET_ARN:-}" ] && PARAMS+=("ScrappaApiKeySecretArn=${SCRAPPA_SECRET_ARN}")
 [ -n "${REFRESH_TOKEN_SECRET_ARN:-}" ] && PARAMS+=("RefreshTokenSecretArn=${REFRESH_TOKEN_SECRET_ARN}")
+[ -n "${GOOGLE_MAPS_SECRET_ARN:-}" ] && PARAMS+=("GoogleMapsKeySecretArn=${GOOGLE_MAPS_SECRET_ARN}")
 [ -n "${CERTIFICATE_ARN:-}" ] && PARAMS+=("CertificateArn=${CERTIFICATE_ARN}")
 
 aws cloudformation deploy \

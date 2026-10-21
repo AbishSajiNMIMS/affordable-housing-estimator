@@ -163,17 +163,36 @@
         <p class="small text-muted">Found with k-nearest neighbours using size{% if "bathrooms" in feats %}, bedrooms and bathrooms{% else %} and bedrooms{% endif %}
           {%- if result.similar and result.similar[0].same_locality %} within {{ prop.locality }}{% else %} across {{ spec.name }} (too few records in this locality){% endif %}.
           Price is not used to find them. Prices shown are {{ ds.price_note }}.</p>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead><tr><th>Locality</th><th>Size</th><th>Rooms</th><th class="text-end">{{ "Asking price" if is_listings else "Recorded price" }}</th><th class="text-end">₹/sq ft</th></tr></thead>
-            <tbody>
-              {% for s in result.similar %}
-              <tr><td>{% if is_listings and s.source_url %}<a href="{{ s.source_url }}" target="_blank" rel="noopener nofollow">{{ s.locality }}</a>{% else %}{{ s.locality }}{% endif %}</td>
-                  <td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK{% if s.bathrooms %}, {{ s.bathrooms }} bath{% endif %}{% if s.property_type %} {{ s.property_type|lower }}{% endif %}</td>
-                  <td class="text-end">{{ s.price.lakh }}</td><td class="text-end">{{ "{:,}".format(s.price_per_sqft) }}</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+        <div class="row g-3">
+          {% for s in result.similar %}
+          <div class="col-12 col-sm-4">
+            <div class="card h-100 similar-card">
+              {% if s.photo_url %}
+              <div class="listing-media">
+                <img src="{{ s.photo_url }}" class="card-img-top" alt="Listing photo, {{ s.locality }}" loading="lazy"
+                     referrerpolicy="no-referrer" onerror="this.closest('.listing-media').remove()">
+                <span class="media-label">Listing photo</span>
+              </div>
+              {% elif maps_enabled %}
+              <div class="listing-media">
+                <img src="{{ url_for('area_map', city=city, locality=s.locality) }}" class="card-img-top"
+                     alt="Map of {{ s.locality }}" loading="lazy" onerror="this.closest('.listing-media').remove()">
+                <span class="media-label">Area: {{ s.locality }} (not the exact home)</span>
+              </div>
+              {% endif %}
+              <div class="card-body p-3">
+                <div class="fw-semibold">{{ s.price.lakh }}{% if s.price.crore %} <span class="text-muted fw-normal small">({{ s.price.crore }})</span>{% endif %}</div>
+                <div class="small text-muted mb-1">₹{{ "{:,}".format(s.price_per_sqft) }} per sq ft</div>
+                <div class="small">{{ s.bedrooms }} BHK{% if s.bathrooms %}, {{ s.bathrooms }} bath{% endif %}{% if s.property_type %} {{ s.property_type|lower }}{% endif %}
+                  · {{ "{:,}".format(s.area_sqft) }} sq ft</div>
+                <div class="small">{{ s.locality }}</div>
+                {% if is_listings and s.source_url %}
+                <a href="{{ s.source_url }}" class="small stretched-link" target="_blank" rel="noopener nofollow">View listing on Housing.com</a>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+          {% endfor %}
         </div>
         <p class="small text-muted mb-0 mt-2">Source: <a href="{{ ds.source_url }}" target="_blank" rel="noopener">{{ ds.source }}</a>
           {%- if is_listings and result.similar %} · fetched {{ result.similar[0].retrieved_at|nicetime }} · asking prices, not sale prices{% else %} · historical asking prices{% endif %}.</p>

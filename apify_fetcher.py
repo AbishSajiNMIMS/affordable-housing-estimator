@@ -26,6 +26,7 @@ Run from the command line:
     python apify_fetcher.py                 # Mumbai, respects MIN_REFRESH_INTERVAL_MINUTES
     python apify_fetcher.py --max 500       # fewer listings (cheaper)
     python apify_fetcher.py --force         # ignore the interval
+    python apify_fetcher.py --from-cache    # re-read the last saved response (free)
 
 Then train the Mumbai model:  python train_model.py --city mumbai
 """
@@ -134,6 +135,12 @@ def locality_from_address(address, city_name: str) -> str:
     return ""
 
 
+def _https_url(value) -> str:
+    """Only plain https links are kept (shown as <img> sources on the page)."""
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"https://[^\s\"'<>]+", text) else ""
+
+
 def _is_rent(item: dict) -> bool:
     kind = str(item.get("listing_type") or "").lower()
     unit = str(item.get("price_unit") or "").lower()
@@ -206,6 +213,7 @@ def normalise_items(items, city: str, retrieved_at: str) -> tuple[pd.DataFrame, 
             "price_per_sqft": np.nan,
             "source": SOURCE_NAME,
             "source_url": str(item.get("listing_url") or item.get("url") or ""),
+            "photo_url": _https_url(item.get("photo_url") or item.get("image") or item.get("image_url")),
             "retrieved_at": stamp,
         })
 
@@ -294,6 +302,45 @@ def load_listings(city: str = "mumbai") -> pd.DataFrame:
         return pd.DataFrame(columns=housing_data.SCHEMA)
 
 
+def _merge_and_save(city: str, new: pd.DataFrame) -> tuple[int, pd.DataFrame]:
+    data_path, _, _ = _paths(city)
+    old = load_listings(city)
+    if "photo_url" not in old.columns:
+        old["photo_url"] = ""
+    added = int((~new["property_id"].isin(set(old["property_id"].astype(str)))).sum())
+    # Newest copy of a listing wins.
+    combined = pd.concat([old, new], ignore_index=True).drop_duplicates(subset="property_id", keep="last")
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = data_path.with_suffix(".tmp")
+    combined[housing_data.SCHEMA].to_csv(tmp, index=False)
+    tmp.replace(data_path)
+    return added, combined
+
+
+def rebuild_from_cache(city: str = "mumbai") -> dict:
+    """Re-read the last raw Apify response (no API call, no credit used).
+
+    Useful after a parser change, for example to add listing photos to
+    listings that were fetched before photos were kept.
+    """
+    _, _, raw_dir = _paths(city)
+    raw_path = raw_dir / f"apify_{city}_latest.json"
+    try:
+        with open(raw_path) as f:
+            items = json.load(f)
+        stamp = read_status(city).get("last_success") or _now().isoformat(timespec="seconds")
+        new, rejected = normalise_items(items, city, stamp)
+    except FileNotFoundError:
+        return {"ok": False, "message": f"No saved Apify response at {raw_path}. Run a normal fetch first."}
+    except (json.JSONDecodeError, FetchError) as exc:
+        return {"ok": False, "message": f"Could not read {raw_path}: {exc}"}
+    added, combined = _merge_and_save(city, new)
+    photos = int((new["photo_url"].fillna("") != "").sum())
+    return {"ok": True, "rejected": rejected,
+            "message": f"Rebuilt {len(new)} listings from the saved response ({photos} with a photo). "
+                       f"{len(combined)} listings saved. No Apify credit used."}
+
+
 def refresh(city: str = "mumbai", max_results: int | None = None, force: bool = False,
             session=None) -> dict:
     """Fetch, validate, de-duplicate and save listings for one city.
@@ -332,15 +379,7 @@ def refresh(city: str = "mumbai", max_results: int | None = None, force: bool = 
         _write_status(city, last_error=f"unexpected error: {exc.__class__.__name__}", last_error_at=retrieved_at)
         return {"ok": False, "message": f"Fetch failed unexpectedly ({exc.__class__.__name__}); keeping previous data."}
 
-    old = load_listings(city)
-    added = int((~new["property_id"].isin(set(old["property_id"].astype(str)))).sum())
-    # Newest copy of a listing wins.
-    combined = pd.concat([old, new], ignore_index=True).drop_duplicates(subset="property_id", keep="last")
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = data_path.with_suffix(".tmp")
-    combined[housing_data.SCHEMA].to_csv(tmp, index=False)
-    tmp.replace(data_path)
-
+    added, combined = _merge_and_save(city, new)
     result = {"ok": True, "received": len(items), "valid": len(new), "added": added,
               "rejected": rejected, "total": len(combined), **info}
     _write_status(city, last_success=retrieved_at, last_result=result, last_error=None)
@@ -355,8 +394,13 @@ def main():
     parser.add_argument("--city", choices=sorted(ACTOR_CITY), default="mumbai")
     parser.add_argument("--max", type=int, default=None, help=f"listings to request (default {config.APIFY_MAX_RESULTS})")
     parser.add_argument("--force", action="store_true", help="ignore MIN_REFRESH_INTERVAL_MINUTES")
+    parser.add_argument("--from-cache", action="store_true",
+                        help="re-read the last saved Apify response instead of calling Apify (free)")
     args = parser.parse_args()
-    result = refresh(args.city, max_results=args.max, force=args.force)
+    if args.from_cache:
+        result = rebuild_from_cache(args.city)
+    else:
+        result = refresh(args.city, max_results=args.max, force=args.force)
     print(result["message"])
     if result.get("rejected"):
         print("Rejected:", result["rejected"])

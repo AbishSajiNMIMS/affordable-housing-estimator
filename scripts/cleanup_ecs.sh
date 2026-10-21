@@ -25,7 +25,7 @@ aws ecr delete-repository --region "$AWS_REGION" --repository-name "$ECR_REPOSIT
   || echo "  (repository not found, skipping)"
 
 if [ "${DELETE_SECRETS:-0}" = "1" ]; then
-  for s in "${PREFIX}/scrappa-api-key" "${PREFIX}/refresh-token"; do
+  for s in "${PREFIX}/scrappa-api-key" "${PREFIX}/refresh-token" "${PREFIX}/google-maps-key"; do
     aws secretsmanager delete-secret --region "$AWS_REGION" --secret-id "$s" \
       --force-delete-without-recovery >/dev/null 2>&1 && echo "Deleted secret $s" || true
   done

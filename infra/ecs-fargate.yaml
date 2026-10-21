@@ -1,0 +1,389 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Affordable Housing Price Estimator - one Flask container on ECS Fargate behind
+  an Application Load Balancer, with live data persisted on Amazon EFS.
+  Only the load balancer accepts traffic from the internet.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: Full ECR image URI, e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com/affordable-housing-estimator:abc123
+  ContainerPort:
+    Type: Number
+    Default: 8000
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+    Description: Keep at 1 (live data and the optional refresh schedule assume one task). Set 0 to pause.
+  TaskCpu:
+    Type: String
+    Default: "1024"
+    AllowedValues: ["512", "1024", "2048"]
+  TaskMemory:
+    Type: String
+    Default: "2048"
+    AllowedValues: ["1024", "2048", "3072", "4096"]
+  ScrappaApiKeySecretArn:
+    Type: String
+    Default: ""
+    Description: Optional. ARN of a Secrets Manager secret holding the Scrappa API key (plain text).
+  RefreshTokenSecretArn:
+    Type: String
+    Default: ""
+    Description: Optional. ARN of a Secrets Manager secret holding the admin refresh token (plain text).
+  LiveCities:
+    Type: String
+    Default: bangalore
+  AutoRefreshHours:
+    Type: String
+    Default: "0"
+    Description: Background refresh interval in hours (0 = off). Each refresh uses 1 API credit per city.
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: Optional ACM certificate ARN to add an HTTPS listener (needs your own domain).
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+
+Conditions:
+  HasApiKey: !Not [!Equals [!Ref ScrappaApiKeySecretArn, ""]]
+  HasRefreshToken: !Not [!Equals [!Ref RefreshTokenSecretArn, ""]]
+  HasAnySecret: !Or [!Condition HasApiKey, !Condition HasRefreshToken]
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
+
+Resources:
+  # ---------------------------------------------------------------- Network
+  # Two public subnets (the load balancer needs two Availability Zones).
+  # The task gets a public IP only so it can reach the internet (ECR, the
+  # Scrappa API) without a NAT gateway (~US$32/month). Its security group
+  # accepts traffic only from the load balancer, so it is not reachable
+  # directly from the internet.
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-vpc" }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-public-a" }]
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-public-b" }]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetBRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # --------------------------------------------------------- Security groups
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public web entry point (HTTP/HTTPS only)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: App container - accepts traffic only from the load balancer
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EFS - NFS from the app task only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref TaskSecurityGroup
+
+  # ------------------------------------------------- Persistent storage (EFS)
+  # Container file systems are wiped on every deployment, so fetched live
+  # listings are stored on EFS. Model artifacts are baked into the image.
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      FileSystemTags: [{ Key: Name, Value: !Sub "${AWS::StackName}-live-data" }]
+
+  MountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroups: [!Ref EfsSecurityGroup]
+
+  MountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PublicSubnetB
+      SecurityGroups: [!Ref EfsSecurityGroup]
+
+  AccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: { Uid: "1000", Gid: "1000" }   # appuser in the Dockerfile
+      RootDirectory:
+        Path: /live-data
+        CreationInfo: { OwnerUid: "1000", OwnerGid: "1000", Permissions: "755" }
+
+  # ------------------------------------------------------------ Load balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref LoadBalancerSecurityGroup]
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: "30" }
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - !If
+          - HasCertificate
+          - Type: redirect
+            RedirectConfig: { Protocol: HTTPS, Port: "443", StatusCode: HTTP_301 }
+          - Type: forward
+            TargetGroupArn: !Ref TargetGroup
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates: [{ CertificateArn: !Ref CertificateArn }]
+      DefaultActions:
+        - { Type: forward, TargetGroupArn: !Ref TargetGroup }
+
+  # ---------------------------------------------------------------- IAM roles
+  # Execution role: used by ECS itself to pull the image, write logs and
+  # read the secrets. The app code never sees these permissions.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ExecutionRoleSecretsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasAnySecret
+    Properties:
+      PolicyName: read-app-secrets
+      Roles: [!Ref ExecutionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              - !If [HasApiKey, !Ref ScrappaApiKeySecretArn, !Ref "AWS::NoValue"]
+              - !If [HasRefreshToken, !Ref RefreshTokenSecretArn, !Ref "AWS::NoValue"]
+
+  # Task role: permissions of the running application (EFS access only).
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: efs-live-data
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource: !GetAtt FileSystem.Arn
+                Condition:
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn: !GetAtt AccessPoint.Arn
+
+  # -------------------------------------------------------------------- ECS
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterSettings: [{ Name: containerInsights, Value: disabled }]
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}"
+      RetentionInDays: 14
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-web"
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      RuntimePlatform: { CpuArchitecture: X86_64, OperatingSystemFamily: LINUX }
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: live-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref FileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref AccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: web
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings: [{ ContainerPort: !Ref ContainerPort, Protocol: tcp }]
+          Environment:
+            - { Name: PORT, Value: !Ref ContainerPort }
+            - { Name: LIVE_CITIES, Value: !Ref LiveCities }
+            - { Name: AUTO_REFRESH_HOURS, Value: !Ref AutoRefreshHours }
+            - { Name: LIVE_DIR, Value: /app/data/live }
+          Secrets:
+            - !If
+              - HasApiKey
+              - { Name: SCRAPPA_API_KEY, ValueFrom: !Ref ScrappaApiKeySecretArn }
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasRefreshToken
+              - { Name: REFRESH_TOKEN, ValueFrom: !Ref RefreshTokenSecretArn }
+              - !Ref "AWS::NoValue"
+          MountPoints:
+            - { SourceVolume: live-data, ContainerPath: /app/data/live, ReadOnly: false }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: [HttpListener, MountTargetA, MountTargetB]
+    Properties:
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      PlatformVersion: "1.4.0"
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      HealthCheckGracePeriodSeconds: 120
+      # Stop the old task before starting the new one, so two tasks never
+      # write the same live-data files at once (brief downtime on deploys).
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker: { Enable: true, Rollback: true }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref TaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: web
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  WebsiteUrl:
+    Description: Public URL of the estimator
+    Value: !If
+      - HasCertificate
+      - !Sub "https://${LoadBalancer.DNSName} (point your domain's DNS here)"
+      - !Sub "http://${LoadBalancer.DNSName}"
+  ClusterName:
+    Value: !Ref Cluster
+  ServiceName:
+    Value: !GetAtt Service.Name
+  LogGroupName:
+    Value: !Ref LogGroup
+  ExecutionRoleArn:
+    Value: !GetAtt ExecutionRole.Arn
+  TaskRoleArn:
+    Value: !GetAtt TaskRole.Arn

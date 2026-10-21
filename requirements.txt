@@ -1,0 +1,20 @@
+# Web application
+Flask==3.1.3
+gunicorn==26.2.0          # production web server used in Docker (Linux/macOS only)
+python-dotenv==1.2.4      # loads a local .env file
+
+# Data handling
+numpy==2.5.4
+pandas==3.0.6
+requests==2.34.2
+
+# Machine learning
+scikit-learn==1.9.1       # KNN, K-Means, PCA, LDA, preprocessing
+joblib==1.6.0             # saving fitted scikit-learn objects
+# TensorFlow/Keras neural network. The smaller CPU-only build on Linux
+# (Docker, CI); the standard package on macOS and Windows.
+tensorflow-cpu==2.21.0; sys_platform == "linux"
+tensorflow==2.21.0; sys_platform != "linux"
+
+# Tests
+pytest==9.1.1

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Affordable Housing Price Estimator{% endblock %}</title>
+  <meta name="description" content="Indicative machine-learning price estimates for residential property in Bengaluru, India.">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-5.3.3.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar navbar-dark bg-brand">
+    <div class="container">
+      <a class="navbar-brand fw-semibold" href="{{ url_for('index') }}">🏠 Affordable Housing Price Estimator</a>
+      <span class="navbar-text small d-none d-md-inline">FOML student mini-project</span>
+    </div>
+  </nav>
+  <main class="container py-4">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="border-top py-3 small text-muted">
+    <div class="container">
+      This is an indicative machine-learning estimate for learning purposes. It is not an official valuation,
+      not financial advice and not a guaranteed market price.
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

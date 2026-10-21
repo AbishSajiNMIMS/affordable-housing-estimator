@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% set nn = metrics.neural_network.test_metrics %}
+{% set ds = metrics.dataset %}
+{% block content %}
+
+<div class="row g-4">
+  <div class="col-12">
+    <h1 class="h3 mb-1">What might this home be worth?</h1>
+    <p class="text-muted mb-2">
+      Enter a few details about a flat or house in <strong>{{ config.TRAINING_CITY }}</strong> and get an
+      indicative price from a neural network trained on {{ "{:,}".format(ds.rows_used) }} real historical listings,
+      plus the most similar recorded properties and the property group it belongs to.
+    </p>
+    <div class="small">
+      <span class="badge text-bg-secondary">Training data: historical</span>
+      {% if live.label == "live" %}
+        <span class="badge text-bg-success">Live listings: updated {{ live.last_success|nicetime }}</span>
+      {% elif live.label == "cached" %}
+        <span class="badge text-bg-warning">Live listings: cached copy from {{ live.last_success|nicetime }}</span>
+      {% else %}
+        <span class="badge text-bg-light border">Live listings: not available</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if notice %}
+  <div class="col-12"><div class="alert alert-info mb-0">{{ notice }}</div></div>
+  {% endif %}
+
+  <!-- ===================== FORM ===================== -->
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Property details</h2>
+        {% if errors %}
+        <div class="alert alert-danger py-2" role="alert">
+          <ul class="mb-0 ps-3">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+        <form method="post" action="{{ url_for('index') }}" id="estimate-form" novalidate>
+          <div class="mb-3">
+            <label class="form-label">City</label>
+            <input class="form-control" value="{{ config.TRAINING_CITY }}" disabled>
+            <div class="form-text">The training dataset only covers {{ config.TRAINING_CITY }}.</div>
+          </div>
+          <div class="mb-3">
+            <label for="locality" class="form-label">Locality / area</label>
+            <input class="form-control" id="locality" name="locality" list="locality-list" required maxlength="80"
+                   placeholder="e.g. Whitefield" value="{{ form.get('locality', '') }}" autocomplete="off">
+            <datalist id="locality-list">
+              {% for loc in localities %}<option value="{{ loc }}">{% endfor %}
+            </datalist>
+            <div class="form-text">Start typing and pick from {{ localities|length }} localities in the data.</div>
+          </div>
+          <div class="mb-3">
+            <label for="area_sqft" class="form-label">Size (square feet)</label>
+            <input type="number" class="form-control" id="area_sqft" name="area_sqft" min="300" max="10000" step="1"
+                   required value="{{ form.get('area_sqft', '1200') }}">
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-4">
+              <label for="bedrooms" class="form-label">Bedrooms</label>
+              <select class="form-select" id="bedrooms" name="bedrooms">
+                {% for n in range(1, 7) %}<option value="{{ n }}" {% if form.get('bedrooms', '2')|string == n|string %}selected{% endif %}>{{ n }} BHK</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-4">
+              <label for="bathrooms" class="form-label">Bathrooms</label>
+              <select class="form-select" id="bathrooms" name="bathrooms">
+                {% for n in range(1, 8) %}<option value="{{ n }}" {% if form.get('bathrooms', '2')|string == n|string %}selected{% endif %}>{{ n }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-4">
+              <label for="balconies" class="form-label">Balconies</label>
+              <select class="form-select" id="balconies" name="balconies">
+                {% for n in range(0, 4) %}<option value="{{ n }}" {% if form.get('balconies', '1')|string == n|string %}selected{% endif %}>{{ n }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="area_type" class="form-label">How the size is measured</label>
+            <select class="form-select" id="area_type" name="area_type">
+              {% for t in ["Super built-up Area", "Built-up Area", "Carpet Area", "Plot Area"] %}
+              <option {% if form.get('area_type', 'Super built-up Area') == t %}selected{% endif %}>{{ t }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Use "Plot Area" for an independent house measured by plot size.</div>
+          </div>
+          <div class="mb-3">
+            <label for="ready_to_move" class="form-label">Availability</label>
+            <select class="form-select" id="ready_to_move" name="ready_to_move">
+              <option value="1" {% if form.get('ready_to_move', '1') == '1' %}selected{% endif %}>Ready to move in</option>
+              <option value="0" {% if form.get('ready_to_move') == '0' %}selected{% endif %}>Under construction / future possession</option>
+            </select>
+          </div>
+          <button class="btn btn-primary w-100" type="submit" id="submit-btn">Estimate price</button>
+          <p class="form-text mt-2 mb-0">Property age and furnishing are not asked because the dataset does not record them.</p>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== RESULTS ===================== -->
+  <div class="col-lg-8">
+    {% if result %}
+    <div class="card shadow-sm mb-4 border-primary" id="results">
+      <div class="card-body">
+        <div class="text-muted small">Estimated price for a {{ prop.bedrooms }} BHK, {{ "{:,.0f}".format(prop.area_sqft) }} sq ft in {{ prop.locality }}</div>
+        <div class="display-6 fw-semibold text-primary">{{ result.price.rupees }}</div>
+        <div class="fs-5">{{ result.price.lakh }}{% if result.price.crore %} ({{ result.price.crore }}){% endif %}
+          <span class="text-muted fs-6">· about ₹{{ "{:,}".format(result.price_per_sqft) }} per sq ft</span></div>
+        <p class="small text-muted mt-2 mb-0">
+          On unseen test properties the model's typical error was about {{ nn.median_abs_pct_error }}%
+          (half of estimates were closer than this, half further away). Treat this as a rough guide.
+        </p>
+        {% if not result.locality_known %}
+        <div class="alert alert-warning small mt-3 mb-0">"{{ prop.locality }}" is not in the training data, so the
+          estimate cannot use anything specific to that locality. It is based on size, rooms and city-wide patterns only.</div>
+        {% elif not result.locality_modelled %}
+        <div class="alert alert-warning small mt-3 mb-0">{{ prop.locality }} has fewer than 5 records in the training data,
+          so the model treats it as a generic "less common locality". Expect a larger error.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h2 class="h5">3 most similar recorded properties <span class="badge text-bg-light border fw-normal">KNN</span></h2>
+        <p class="small text-muted">Found with k-nearest neighbours using size, bedrooms and bathrooms
+          {%- if result.similar and result.similar[0].same_locality %} within {{ prop.locality }}{% else %} across {{ config.TRAINING_CITY }} (too few records in this locality){% endif %}.
+          Price is not used to find them. Prices shown are the recorded listing prices from the historical dataset.</p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead><tr><th>Locality</th><th>Size</th><th>Rooms</th><th class="text-end">Recorded price</th><th class="text-end">₹/sq ft</th></tr></thead>
+            <tbody>
+              {% for s in result.similar %}
+              <tr><td>{{ s.locality }}</td><td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK, {{ s.bathrooms }} bath</td>
+                  <td class="text-end">{{ s.price.lakh }}</td><td class="text-end">{{ "{:,}".format(s.price_per_sqft) }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="small text-muted mb-0 mt-2">Source: <a href="{{ config.TRAINING_SOURCE_URL }}" target="_blank" rel="noopener">{{ config.TRAINING_SOURCE_NAME }}</a> · historical asking prices.</p>
+
+        {% if result.live_similar %}
+        <hr>
+        <h3 class="h6">Similar current listings
+          {% if live.label == "live" %}<span class="badge text-bg-success">live</span>{% else %}<span class="badge text-bg-warning">cached {{ live.last_success|nicetime }}</span>{% endif %}</h3>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead><tr><th>Listing</th><th>Size</th><th>Rooms</th><th class="text-end">Asking price</th></tr></thead>
+            <tbody>
+              {% for s in result.live_similar %}
+              <tr><td>{% if s.source_url %}<a href="{{ s.source_url }}" target="_blank" rel="noopener nofollow">{{ s.locality }}</a>{% else %}{{ s.locality }}{% endif %}</td>
+                  <td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK, {{ s.bathrooms }} bath</td>
+                  <td class="text-end">{{ s.price.lakh }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="small text-muted mb-0 mt-2">Source: {{ live.source }}, retrieved {{ result.live_similar[0].retrieved_at|nicetime }}.
+          These are asking prices, not final sale prices.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+      <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="h5">Property group {{ result.cluster.cluster }} of {{ metrics.kmeans.k }} <span class="badge text-bg-light border fw-normal">K-Means</span></h2>
+            <p class="mb-2">Homes in this group typically have about <strong>{{ "{:,}".format(result.cluster.median_area_sqft) }} sq ft</strong>
+              and {{ result.cluster.typical_bedrooms }} bedrooms, with a median recorded price of
+              <strong>{{ result.cluster.median_price_lakh }} lakh</strong> (₹{{ "{:,}".format(result.cluster.median_price_per_sqft) }}/sq ft).</p>
+            <p class="small text-muted mb-0">{{ "{:,}".format(result.cluster.count) }} properties in this group.
+              Groups are numbered from lowest (1) to highest (4) median price. The group number is just a label
+              found by clustering size and price; it is not a judgement of whether a home is affordable for you.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="h5">Price band: {{ result.band.label }} <span class="badge text-bg-light border fw-normal">LDA</span></h2>
+            <p class="mb-2">Linear Discriminant Analysis places this home in the <strong>{{ result.band.label|lower }}</strong>
+              of the dataset ({{ result.band.range }}) with {{ result.band.probability }}% confidence.</p>
+            <p class="small text-muted mb-0">LDA is used here as a classifier into three equal-sized price bands, not to predict
+              the price itself. On test data it picked the right band {{ (metrics.lda.accuracy * 100)|round|int }}% of the time
+              (guessing would give 33%). It can disagree with the neural network.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h2 class="h5">How it works</h2>
+        <ol class="mb-0">
+          <li>A small <strong>neural network</strong> (TensorFlow/Keras) estimates the price from size, rooms, locality and type.</li>
+          <li><strong>K-nearest neighbours</strong> finds the three most similar properties actually recorded in the data.</li>
+          <li><strong>K-Means</strong> places the home in one of four property groups by size and price.</li>
+          <li><strong>LDA</strong> classifies it into a lower, middle or upper price band, and <strong>PCA</strong> plots it among all properties.</li>
+        </ol>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h2 class="h5">Property map in two dimensions <span class="badge text-bg-light border fw-normal">PCA</span></h2>
+        <canvas id="pca-canvas" height="320" aria-label="PCA scatter plot of properties" role="img"></canvas>
+        <div id="pca-legend" class="small mt-2"></div>
+        <p class="small text-muted mb-0 mt-2">Principal Component Analysis squeezes five scaled measurements (size, bedrooms,
+          bathrooms, balconies, price) into two axes that keep {{ ((metrics.pca.explained_variance_ratio[0] + metrics.pca.explained_variance_ratio[1]) * 100)|round|int }}%
+          of the variation, so similar homes appear close together. The diagonal bands appear because bedrooms and bathrooms are whole numbers. Colours are the K-Means groups.
+          {% if result %}The black star is your property.{% endif %} The axes are combinations of features, not prices.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MODEL + DATA INFO ===================== -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h2 class="h5">Model performance (held-out test data)</h2>
+        <p class="small text-muted">Measured on {{ "{:,}".format(ds.test_rows) }} properties the network never saw during training.</p>
+        <table class="table table-sm small">
+          <thead><tr><th>Method</th><th class="text-end">MAE (lakh)</th><th class="text-end">RMSE (lakh)</th><th class="text-end">R²</th><th class="text-end">Median error</th></tr></thead>
+          <tbody>
+            <tr class="fw-semibold"><td>Neural network</td><td class="text-end">{{ nn.mae_lakh }}</td><td class="text-end">{{ nn.rmse_lakh }}</td><td class="text-end">{{ nn.r2 }}</td><td class="text-end">{{ nn.median_abs_pct_error }}%</td></tr>
+            {% set b1 = metrics.baselines.locality_median_rate_x_area %}
+            <tr><td>Rule of thumb: locality median ₹/sq ft × size</td><td class="text-end">{{ b1.mae_lakh }}</td><td class="text-end">{{ b1.rmse_lakh }}</td><td class="text-end">{{ b1.r2 }}</td><td class="text-end">{{ b1.median_abs_pct_error }}%</td></tr>
+            {% set b2 = metrics.baselines.training_median_price %}
+            <tr><td>Always guess the median price</td><td class="text-end">{{ b2.mae_lakh }}</td><td class="text-end">{{ b2.rmse_lakh }}</td><td class="text-end">{{ b2.r2 }}</td><td class="text-end">{{ b2.median_abs_pct_error }}%</td></tr>
+          </tbody>
+        </table>
+        <p class="small text-muted mb-0">MAE = average absolute error; RMSE punishes large errors more; R² of 1 would be perfect.
+          {{ nn.within_20_pct }}% of test estimates were within 20% of the recorded price. A few very expensive properties
+          make MAE and RMSE large.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h2 class="h5">Data sources</h2>
+        <p class="small mb-2"><strong>Training data (historical):</strong>
+          <a href="{{ config.TRAINING_SOURCE_URL }}" target="_blank" rel="noopener">{{ config.TRAINING_SOURCE_NAME }}</a>,
+          licence {{ config.TRAINING_SOURCE_LICENSE }}. {{ "{:,}".format(ds.rows_raw) }} listings, {{ "{:,}".format(ds.rows_used) }} kept after
+          removing duplicates and invalid rows. Prices are past <em>asking</em> prices (roughly 2017–18), not sale prices and not today's market.
+          Model trained {{ metrics.trained_at|nicetime }}.</p>
+        <p class="small mb-2"><strong>Live listings:</strong>
+          {% if live.label == "live" %}{{ live.records }} listings from {{ live.source }}, last refreshed {{ live.last_success|nicetime }}.
+          {% elif live.label == "cached" %}Showing a cached copy: {{ live.records }} listings from {{ live.source }}, last successful refresh {{ live.last_success|nicetime }}
+            ({{ live.age_hours }} hours ago).
+          {% elif live.configured %}No live listings have been fetched yet{% if live.last_error %} (last attempt failed){% endif %}. Results use the historical dataset only.
+          {% else %}Not configured on this server. Results use the historical dataset only.{% endif %}
+        </p>
+        {% if refresh_enabled %}
+        <details class="small">
+          <summary>Admin: refresh live listings</summary>
+          <form method="post" action="{{ url_for('refresh') }}" class="mt-2 d-flex gap-2">
+            <input type="password" name="token" class="form-control form-control-sm" placeholder="Admin token" required autocomplete="off">
+            <button class="btn btn-outline-secondary btn-sm text-nowrap">Refresh now</button>
+          </form>
+          <div class="form-text">Uses API credits. Refreshes are skipped if the data is newer than {{ config.MIN_REFRESH_INTERVAL_MINUTES }} minutes.</div>
+        </details>
+        {% endif %}
+        <div class="alert alert-secondary small mt-3 mb-0">
+          <strong>Disclaimer:</strong> this is an indicative machine-learning estimate built for a student project.
+          It is not an official valuation, not a guaranteed market price and should not be used for buying, selling,
+          lending or tax decisions. Consult a registered valuer for an actual valuation.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script id="pca-data" type="application/json">{{ {"points": pca_points.points, "user": result.pca_point if result else None}|tojson }}</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}

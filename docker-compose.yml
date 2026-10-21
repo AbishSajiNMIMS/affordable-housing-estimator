@@ -1,0 +1,19 @@
+# Local container run:  docker compose up --build   ->  http://localhost:8000
+services:
+  web:
+    build: .
+    image: affordable-housing-estimator:local
+    ports:
+      - "8000:8000"
+    # Optional: put SCRAPPA_API_KEY / REFRESH_TOKEN in a local .env file
+    # (copied from .env.example). The file is optional.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Keep fetched live listings between container restarts.
+      - live-data:/app/data/live
+    restart: unless-stopped
+
+volumes:
+  live-data:

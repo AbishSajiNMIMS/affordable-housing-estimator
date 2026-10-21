@@ -1,0 +1,48 @@
+{
+  "_comment": "Reference only. infra/ecs-fargate.yaml creates this task definition for you. Use this file if you prefer the ECS console or 'aws ecs register-task-definition --cli-input-json file://task-definition.json' after replacing every ${...} placeholder (see README, 'Manual task definition'). Delete this _comment line before registering.",
+  "family": "housing-estimator-web",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
+  "volumes": [
+    {
+      "name": "live-data",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_FILE_SYSTEM_ID}",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": { "accessPointId": "${EFS_ACCESS_POINT_ID}", "iam": "ENABLED" }
+      }
+    }
+  ],
+  "containerDefinitions": [
+    {
+      "name": "web",
+      "image": "${IMAGE_URI}",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "PORT", "value": "8000" },
+        { "name": "LIVE_CITIES", "value": "bangalore" },
+        { "name": "AUTO_REFRESH_HOURS", "value": "0" },
+        { "name": "LIVE_DIR", "value": "/app/data/live" }
+      ],
+      "secrets": [
+        { "name": "SCRAPPA_API_KEY", "valueFrom": "${SCRAPPA_SECRET_ARN}" },
+        { "name": "REFRESH_TOKEN", "valueFrom": "${REFRESH_TOKEN_SECRET_ARN}" }
+      ],
+      "mountPoints": [{ "sourceVolume": "live-data", "containerPath": "/app/data/live", "readOnly": false }],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/housing-estimator",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "web"
+        }
+      }
+    }
+  ]
+}

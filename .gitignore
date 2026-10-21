@@ -1,0 +1,26 @@
+# Secrets - never commit these
+.env
+*.pem
+.aws/
+credentials
+*.secret
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Generated model artifacts (recreate with: python train_model.py)
+artifacts/*
+!artifacts/README.md
+
+# Live data fetched from the API (licence does not allow redistribution)
+data/live/*
+!data/live/README.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

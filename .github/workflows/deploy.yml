@@ -1,0 +1,66 @@
+# OPT-IN deployment to AWS ECS. It does nothing until you:
+#   1. deploy infra/github-oidc-role.yaml once (creates a role GitHub can assume, no long-lived keys),
+#   2. deploy the main stack once with ./scripts/deploy_ecs.sh,
+#   3. add these in GitHub -> Settings -> Secrets and variables -> Actions:
+#        secret   AWS_DEPLOY_ROLE_ARN   (output of the OIDC stack)
+#        variable AWS_REGION            (e.g. ap-south-1)
+#        variable ECR_REPOSITORY        (default affordable-housing-estimator)
+#        variable STACK_NAME            (default housing-estimator)
+# Then run it from the Actions tab ("Run workflow").
+name: Deploy to AWS ECS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # needed for GitHub OIDC -> AWS
+  contents: read
+
+concurrency:
+  group: deploy-ecs
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'affordable-housing-estimator' }}
+      STACK_NAME: ${{ vars.STACK_NAME || 'housing-estimator' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          if [ -z "${{ secrets.AWS_DEPLOY_ROLE_ARN }}" ] || [ -z "$AWS_REGION" ]; then
+            echo "::error::Set the AWS_DEPLOY_ROLE_ARN secret and AWS_REGION variable first (see README)."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          IMAGE_URI: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Update the stack with the new image
+        # Other parameters (secrets, cities, HTTPS) keep their previous values.
+        run: |
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file infra/ecs-fargate.yaml \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides "ImageUri=$IMAGE_URI"
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" --output text

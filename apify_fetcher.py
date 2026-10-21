@@ -141,6 +141,24 @@ def _https_url(value) -> str:
     return text if re.fullmatch(r"https://[^\s\"'<>]+", text) else ""
 
 
+PHOTO_FIELDS = ("photo_url", "image", "image_url", "thumbnail", "thumbnail_url", "cover_image",
+                "photos", "images")
+
+
+def _photo_url(item: dict) -> str:
+    """First usable https image link; the field name and shape vary between scraper versions."""
+    for field in PHOTO_FIELDS:
+        value = item.get(field)
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if isinstance(value, dict):
+            value = value.get("url") or value.get("src")
+        url = _https_url(value)
+        if url:
+            return url
+    return ""
+
+
 def _is_rent(item: dict) -> bool:
     kind = str(item.get("listing_type") or "").lower()
     unit = str(item.get("price_unit") or "").lower()
@@ -213,7 +231,7 @@ def normalise_items(items, city: str, retrieved_at: str) -> tuple[pd.DataFrame, 
             "price_per_sqft": np.nan,
             "source": SOURCE_NAME,
             "source_url": str(item.get("listing_url") or item.get("url") or ""),
-            "photo_url": _https_url(item.get("photo_url") or item.get("image") or item.get("image_url")),
+            "photo_url": _photo_url(item),
             "retrieved_at": stamp,
         })
 

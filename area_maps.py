@@ -30,6 +30,13 @@ def _cache_path(city_name: str, locality: str):
     return config.LIVE_DIR / "map_cache" / f"{digest}.png"
 
 
+def _error_text(resp) -> str:
+    try:
+        return " ".join(resp.text.split())[:200]
+    except Exception:  # binary or missing body
+        return ""
+
+
 def get_map_png(city_name: str, locality: str, session=None) -> bytes | None:
     """PNG bytes for '<locality>, <city>, India', or None if unavailable."""
     if not enabled():
@@ -51,8 +58,8 @@ def get_map_png(city_name: str, locality: str, session=None) -> bytes | None:
         log.warning("Map request failed for %s: %s", locality, exc.__class__.__name__)
         return None
     if resp.status_code != 200 or not resp.headers.get("Content-Type", "").startswith("image/"):
-        # Never log the URL: it contains the key.
-        log.warning("Map not available for %s (HTTP %s)", locality, resp.status_code)
+        # Never log the URL: it contains the key. Google's error text does not.
+        log.warning("Map not available for %s (HTTP %s): %s", locality, resp.status_code, _error_text(resp))
         return None
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(resp.content)

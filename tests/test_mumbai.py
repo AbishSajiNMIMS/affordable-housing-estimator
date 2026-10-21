@@ -320,3 +320,11 @@ def test_area_map_needs_key_and_known_locality(client, monkeypatch, tmp_path):
     page = client.post("/", data={"locality": "Whitefield", "area_sqft": "1200", "bedrooms": "2",
                                   "bathrooms": "2", "balconies": "1"}).get_data(as_text=True)
     assert "/area-map?city=bengaluru" in page and "test-maps-key" not in page
+
+
+def test_photo_from_list_or_nested_field():
+    a, b = make_apify_items(2)
+    a.pop("photo_url"); a["photos"] = [{"url": "https://img.example/a.jpg"}]
+    b.pop("photo_url"); b["images"] = ["https://img.example/b.jpg"]
+    df, _ = apify_fetcher.normalise_items([a, b], "mumbai", RETRIEVED)
+    assert list(df["photo_url"]) == ["https://img.example/a.jpg", "https://img.example/b.jpg"]

@@ -169,6 +169,7 @@ affordable-housing-estimator/
 ├── data_fetcher.py         Scrappa 99acres client: retries, validation, dedupe, cache, status
 ├── apify_fetcher.py        Mumbai: Apify Housing.com scraper client (same safeguards)
 ├── area_maps.py            optional locality maps (Google Static Maps, key kept server-side)
+├── check_media.py          explains why photos or maps are missing (prints no keys)
 ├── config.py               every setting, overridable with environment variables
 ├── requirements.txt        pinned Python dependencies
 ├── Dockerfile              python:3.12-slim + gunicorn; trains during build
@@ -610,6 +611,7 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 | "Mumbai is not set up on this server yet" | Follow [section 7b](#7b-mumbai-current-housingcom-listings-via-apify): set `APIFY_TOKEN`, run `apify_fetcher.py`, then `train_model.py --city mumbai`, restart. |
 | `APIFY_TOKEN is not set` | Add `APIFY_TOKEN=...` to `.env` in the project folder (same folder as `app.py`). |
 | "Apify token rejected (HTTP 401)" / "Not enough Apify credit (HTTP 402)" | Copy the token again from the Apify console / wait for next month's free credit. |
+| Photos or maps missing (start here) | Run `python check_media.py`: it tests your Google key and your Mumbai photo links and says what to fix. |
 | No maps on the cards | `GOOGLE_MAPS_API_KEY` is not set, or Maps Static API is not enabled for the key. The server log says "Map not available … (HTTP 403)" in the second case. |
 | No photos on Mumbai cards | Run `python apify_fetcher.py --from-cache` then `python train_model.py --city mumbai`. Some listings have no photo. |
 | `Only N valid Mumbai listings; need at least 300` | Fetch more: `python apify_fetcher.py --max 1000 --force`. |

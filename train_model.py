@@ -1,7 +1,12 @@
 """Train every model used by the website and save the artifacts.
 
-Run:  python train_model.py            (full training, about a minute on a laptop)
-      python train_model.py --include-live   (also use validated live listings)
+Run:  python train_model.py                 (Bengaluru, about a minute on a laptop)
+      python train_model.py --city mumbai   (Mumbai, after apify_fetcher.py has saved listings)
+      python train_model.py --all           (every city whose data is present)
+      python train_model.py --include-live  (Bengaluru: also use validated Scrappa listings)
+
+Each city gets its own models in artifacts/<city>/, trained only on that
+city's data and only on the fields that city's data actually contains.
 
 What it does, in the order taught in the FOML labs:
   1. Load and clean the labelled historical dataset (housing_data.py).
@@ -40,21 +45,34 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardSc
 import config
 import housing_data
 
-NUMERIC_FEATURES = ["bedrooms", "bathrooms", "balconies", "ready_to_move"]
 AREA_FEATURE = ["area_sqft"]
-CATEGORICAL_FEATURES = ["locality", "area_type"]
+# Bengaluru feature lists (the defaults). Other cities use the lists in config.CITIES.
+NUMERIC_FEATURES = config.CITIES["bengaluru"]["numeric"]
+CATEGORICAL_FEATURES = config.CITIES["bengaluru"]["categorical"]
 MODEL_FEATURES = AREA_FEATURE + NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 # Features used for K-Means and PCA (price is included on purpose here:
 # these are descriptive tools, not the price predictor).
 CLUSTER_FEATURES = ["log_area", "log_price"]
-PCA_FEATURES = ["log_area", "bedrooms", "bathrooms", "balconies", "log_price"]
+PCA_FEATURES = config.CITIES["bengaluru"]["pca"]
 N_CLUSTERS = 4
 PRICE_BANDS = ["Lower third", "Middle third", "Upper third"]
 RANDOM_STATE = 42
 
 
-def build_preprocessor() -> ColumnTransformer:
+def city_features(city: str) -> dict:
+    """Feature lists for one city, saved in metrics.json for the estimator."""
+    spec = config.CITIES[city]
+    return {
+        "numeric": spec["numeric"],
+        "categorical": spec["categorical"],
+        "model": AREA_FEATURE + spec["numeric"] + spec["categorical"],
+        "knn": spec["knn"],
+        "pca": spec["pca"],
+    }
+
+
+def build_preprocessor(numeric=None, categorical=None) -> ColumnTransformer:
     """Scaling + one-hot encoding, shared by the neural network and LDA.
 
     * area is log-transformed then standardised (it is very skewed),
@@ -63,14 +81,16 @@ def build_preprocessor() -> ColumnTransformer:
       than 5 training examples are grouped into one "infrequent" column,
       and unseen localities at prediction time map to that column too.
     """
+    numeric = numeric or NUMERIC_FEATURES
+    categorical = categorical or CATEGORICAL_FEATURES
     return ColumnTransformer(
         [
             ("area", Pipeline([("log", FunctionTransformer(np.log1p)), ("scale", StandardScaler())]), AREA_FEATURE),
-            ("num", StandardScaler(), NUMERIC_FEATURES),
+            ("num", StandardScaler(), numeric),
             (
                 "cat",
                 OneHotEncoder(handle_unknown="infrequent_if_exist", min_frequency=5, sparse_output=False),
-                CATEGORICAL_FEATURES,
+                categorical,
             ),
         ]
     )
@@ -132,23 +152,34 @@ def load_live_for_training() -> pd.DataFrame:
     live["balconies"] = live["balconies"].fillna(live["bedrooms"].clip(upper=3) - 1)
     live["area_type"] = live["area_type"].fillna("Super built-up Area")
     live["ready_to_move"] = live["ready_to_move"].fillna(1)
+    if "property_type" not in live.columns:  # files saved before this column existed
+        live["property_type"] = ""
     live["source"] = live["source"] + " (asking price; some features imputed)"
     return live
 
 
-def train(epochs: int = 200, sample: int | None = None, include_live: bool = False,
-          min_live_records: int = 200, artifacts_dir=None, verbose: int = 1) -> dict:
+def train(city: str = config.DEFAULT_CITY, epochs: int = 200, sample: int | None = None,
+          include_live: bool = False, min_live_records: int = 200, artifacts_dir=None,
+          data_path=None, min_rows: int | None = None, verbose: int = 1) -> dict:
     import tensorflow as tf
     from tensorflow.keras.callbacks import EarlyStopping
 
-    artifacts_dir = artifacts_dir or config.ARTIFACTS_DIR
-    os.makedirs(artifacts_dir, exist_ok=True)
+    spec = config.CITIES[city]
+    features = city_features(city)
+    model_features, pca_features = features["model"], features["pca"]
+    artifacts_dir = artifacts_dir or config.city_artifacts_dir(city)
+    data_path = data_path or spec["data_path"]
+    min_rows = config.MIN_TRAINING_ROWS if min_rows is None else min_rows
     tf.keras.utils.set_random_seed(RANDOM_STATE)
 
     # 1. Data -----------------------------------------------------------------
-    df, report = housing_data.load_training_dataset()
+    df, report = housing_data.load_training_dataset(data_path, city=city)
+    if len(df) < min_rows:
+        raise ValueError(f"Only {len(df)} valid {spec['name']} listings; need at least {min_rows} to train. "
+                         f"Fetch more with: {spec['how_to_get_data']}")
+    os.makedirs(artifacts_dir, exist_ok=True)
     report["live_records_used"] = 0
-    if include_live:
+    if include_live and city == "bengaluru":
         live = load_live_for_training()
         if len(live) < min_live_records:
             print(f"Only {len(live)} valid live records for {config.TRAINING_CITY}; "
@@ -159,15 +190,15 @@ def train(epochs: int = 200, sample: int | None = None, include_live: bool = Fal
     if sample:
         df = df.sample(n=min(sample, len(df)), random_state=RANDOM_STATE).reset_index(drop=True)
     df = add_log_columns(df)
-    print(f"Clean records: {len(df)}  ({report})")
+    print(f"{spec['name']}: {len(df)} clean records  ({report})")
 
     # 2. Train/test split -----------------------------------------------------
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=RANDOM_STATE)
 
     # 3. Preprocessing (fit on training data only to avoid leakage) -----------
-    preprocessor = build_preprocessor()
-    X_train = preprocessor.fit_transform(train_df[MODEL_FEATURES]).astype("float32")
-    X_test = preprocessor.transform(test_df[MODEL_FEATURES]).astype("float32")
+    preprocessor = build_preprocessor(features["numeric"], features["categorical"])
+    X_train = preprocessor.fit_transform(train_df[model_features]).astype("float32")
+    X_test = preprocessor.transform(test_df[model_features]).astype("float32")
     # The network learns log(price): prices span 10 lakh to 30 crore, and
     # a log scale stops the biggest properties dominating the MSE loss.
     y_train = np.log(train_df["price_lakh"].values).astype("float32")
@@ -226,16 +257,16 @@ def train(epochs: int = 200, sample: int | None = None, include_live: bool = Fal
         })
 
     # 7. PCA to two dimensions ---------------------------------------------------
-    pca_scaler = StandardScaler().fit(df[PCA_FEATURES])
-    pca = PCA(n_components=2, random_state=RANDOM_STATE).fit(pca_scaler.transform(df[PCA_FEATURES]))
-    coords = pca.transform(pca_scaler.transform(df[PCA_FEATURES]))
+    pca_scaler = StandardScaler().fit(df[pca_features])
+    pca = PCA(n_components=2, random_state=RANDOM_STATE).fit(pca_scaler.transform(df[pca_features]))
+    coords = pca.transform(pca_scaler.transform(df[pca_features]))
     rng = np.random.default_rng(RANDOM_STATE)
     idx = rng.choice(len(df), size=min(1500, len(df)), replace=False)
     pca_points = {
         "explained_variance_ratio": [round(float(v), 3) for v in pca.explained_variance_ratio_],
-        "features": PCA_FEATURES,
+        "features": pca_features,
         "loadings": {f: [round(float(pca.components_[0][i]), 3), round(float(pca.components_[1][i]), 3)]
-                     for i, f in enumerate(PCA_FEATURES)},
+                     for i, f in enumerate(pca_features)},
         "points": [[round(float(coords[i, 0]), 3), round(float(coords[i, 1]), 3), int(df["cluster"].iloc[i])]
                    for i in idx],
     }
@@ -271,19 +302,22 @@ def train(epochs: int = 200, sample: int | None = None, include_live: bool = Fal
     with open(os.path.join(artifacts_dir, "pca_points.json"), "w") as f:
         json.dump(pca_points, f)
 
-    with open(config.RAW_DATASET_PATH, "rb") as f:
+    with open(data_path, "rb") as f:
         sha = hashlib.sha256(f.read()).hexdigest()
     metrics = {
+        "city": city,
+        "features": features,
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "dataset": {
             **report,
             "rows_used": len(df),
             "train_rows": len(train_df),
             "test_rows": len(test_df),
-            "city": config.TRAINING_CITY,
-            "source": config.TRAINING_SOURCE_NAME,
-            "source_url": config.TRAINING_SOURCE_URL,
-            "license": config.TRAINING_SOURCE_LICENSE,
+            "city": spec["name"],
+            "source": spec["source_name"],
+            "source_url": spec["source_url"],
+            "license": spec["license"],
+            "price_note": spec["price_note"],
             "sha256": sha,
             "sampled": bool(sample),
         },
@@ -297,7 +331,7 @@ def train(epochs: int = 200, sample: int | None = None, include_live: bool = Fal
         "baselines": baselines,
         "kmeans": {"k": N_CLUSTERS, "features": ["log(area)", "log(price)"], "wcss_by_k": wcss,
                    "clusters": cluster_summary},
-        "pca": {"explained_variance_ratio": pca_points["explained_variance_ratio"], "features": PCA_FEATURES},
+        "pca": {"explained_variance_ratio": pca_points["explained_variance_ratio"], "features": pca_features},
         "lda": lda_metrics,
     }
     with open(os.path.join(artifacts_dir, "metrics.json"), "w") as f:
@@ -308,15 +342,26 @@ def train(epochs: int = 200, sample: int | None = None, include_live: bool = Fal
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--city", choices=sorted(config.CITIES), default=config.DEFAULT_CITY)
+    parser.add_argument("--all", action="store_true",
+                        help="train every city whose data is present; cities without data are skipped")
     parser.add_argument("--epochs", type=int, default=200, help="maximum epochs (early stopping usually ends sooner)")
     parser.add_argument("--sample", type=int, default=None, help="train on a random sample of N rows (for quick tests)")
     parser.add_argument("--include-live", action="store_true",
-                        help="add validated live listings for the training city to the training data")
+                        help="Bengaluru only: add validated Scrappa live listings to the training data")
     parser.add_argument("--min-live-records", type=int, default=200)
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
-    train(epochs=args.epochs, sample=args.sample, include_live=args.include_live,
-          min_live_records=args.min_live_records, verbose=0 if args.quiet else 2)
+    cities = sorted(config.CITIES) if args.all else [args.city]
+    for city in cities:
+        try:
+            train(city=city, epochs=args.epochs, sample=args.sample, include_live=args.include_live,
+                  min_live_records=args.min_live_records, verbose=0 if args.quiet else 2)
+        except (FileNotFoundError, ValueError) as exc:
+            if not args.all or city == config.DEFAULT_CITY:
+                raise SystemExit(f"Training {city} failed: {exc}")
+            # With --all a city without data is skipped; the website shows it as "not ready".
+            print(f"Skipping {city}: {exc}")
 
 
 if __name__ == "__main__":

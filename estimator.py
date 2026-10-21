@@ -16,12 +16,12 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
 import config
-from train_model import CLUSTER_FEATURES, MODEL_FEATURES, PCA_FEATURES, PRICE_BANDS
+from train_model import CLUSTER_FEATURES, PRICE_BANDS, city_features
 
-# Features used to measure "similar" properties. The price is deliberately
-# NOT included: we look for homes with similar characteristics and then show
-# what they were listed for.
-KNN_FEATURES = ["log_area", "bedrooms", "bathrooms"]
+# Features used to measure "similar" properties (Bengaluru; each city's list
+# is in config.CITIES). The price is deliberately NOT included: we look for
+# homes with similar characteristics and then show what they were listed for.
+KNN_FEATURES = config.CITIES["bengaluru"]["knn"]
 
 ARTIFACT_FILES = ["price_nn.keras", "preprocessor.joblib", "kmeans.joblib", "pca.joblib",
                   "lda.joblib", "reference_data.csv", "pca_points.json", "metrics.json"]
@@ -52,12 +52,23 @@ def format_inr(amount_lakh: float) -> dict:
     }
 
 
+def _optional_int(value):
+    """Mumbai listings have no bathroom count: show None instead of crashing on NaN."""
+    try:
+        return None if pd.isna(value) else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class Estimator:
-    def __init__(self, artifacts_dir=None):
-        self.dir = str(artifacts_dir or config.ARTIFACTS_DIR)
+    def __init__(self, city: str = config.DEFAULT_CITY, artifacts_dir=None):
+        self.city = city
+        self.spec = config.CITIES[city]
+        self.dir = str(artifacts_dir or config.city_artifacts_dir(city))
         missing = [f for f in ARTIFACT_FILES if not os.path.exists(os.path.join(self.dir, f))]
         if missing:
-            raise ModelNotReady(f"Missing artifacts {missing}. Run: python train_model.py")
+            raise ModelNotReady(f"{self.spec['name']} model is not trained yet (missing {missing}). "
+                                f"Run: python train_model.py --city {city}")
 
         from tensorflow import keras
 
@@ -70,10 +81,12 @@ class Estimator:
             self.metrics = json.load(f)
         with open(os.path.join(self.dir, "pca_points.json")) as f:
             self.pca_points = json.load(f)
+        self.features = self.metrics.get("features") or city_features(city)
+        self.knn_features = self.features["knn"]
 
         self.reference = pd.read_csv(os.path.join(self.dir, "reference_data.csv"))
         self.reference["log_area"] = np.log(self.reference["area_sqft"])
-        self.knn_scaler = StandardScaler().fit(self.reference[KNN_FEATURES])
+        self.knn_scaler = StandardScaler().fit(self.reference[self.knn_features])
         self.localities = sorted(self.reference["locality"].unique().tolist())
         self._known_localities = {loc.lower(): loc for loc in self.localities}
         # Localities with enough examples to have their own one-hot column.
@@ -82,20 +95,25 @@ class Estimator:
             str(c) for c in (encoder.infrequent_categories_[0] if encoder.infrequent_categories_[0] is not None else [])
         }
         self.clusters = {c["cluster"]: c for c in self.metrics["kmeans"]["clusters"]}
+        # Choices for the property type drop-down (Mumbai only), most common first.
+        self.property_types = []
+        if "property_type" in self.features["categorical"]:
+            counts = self.reference["property_type"].dropna().astype(str).value_counts()
+            self.property_types = counts[counts >= 5].index.tolist() or counts.index.tolist()
 
     # ------------------------------------------------------------------
     def canonical_locality(self, text: str) -> str | None:
         return self._known_localities.get(str(text or "").strip().lower())
 
     def _feature_row(self, prop: dict) -> pd.DataFrame:
-        return pd.DataFrame([{k: prop[k] for k in MODEL_FEATURES}])
+        return pd.DataFrame([{k: prop[k] for k in self.features["model"]}])
 
     def predict_price_lakh(self, prop: dict) -> float:
         X = self.preprocessor.transform(self._feature_row(prop)).astype("float32")
         return float(np.exp(self.model.predict(X, verbose=0).ravel()[0]))
 
     def similar_properties(self, prop: dict, k: int = 3, pool: pd.DataFrame | None = None) -> list[dict]:
-        """KNN: the k nearest properties by scaled area, bedrooms and bathrooms.
+        """KNN: the k nearest properties by scaled area and rooms (self.knn_features).
 
         Candidates are limited to the same locality when it has at least k
         records; otherwise the whole pool is searched.
@@ -103,17 +121,18 @@ class Estimator:
         pool = self.reference if pool is None else pool
         if pool is None or len(pool) == 0:
             return []
-        pool = pool.dropna(subset=["area_sqft", "bedrooms", "bathrooms", "price_lakh"]).copy()
+        feats = self.knn_features
+        raw_feats = ["area_sqft" if f == "log_area" else f for f in feats]
+        pool = pool.dropna(subset=raw_feats + ["price_lakh"]).copy()
         if len(pool) == 0:
             return []
         pool["log_area"] = np.log(pool["area_sqft"])
-        same = pool[pool["locality"].str.lower() == str(prop["locality"]).lower()]
+        same = pool[pool["locality"].astype(str).str.lower() == str(prop["locality"]).lower()]
         candidates = same if len(same) >= k else pool
         k = min(k, len(candidates))
-        query = pd.DataFrame([{"log_area": np.log(prop["area_sqft"]), "bedrooms": prop["bedrooms"],
-                               "bathrooms": prop["bathrooms"]}])
-        nn = NearestNeighbors(n_neighbors=k).fit(self.knn_scaler.transform(candidates[KNN_FEATURES]))
-        distances, indices = nn.kneighbors(self.knn_scaler.transform(query[KNN_FEATURES]))
+        query = pd.DataFrame([{f: np.log(prop["area_sqft"]) if f == "log_area" else prop[f] for f in feats}])
+        nn = NearestNeighbors(n_neighbors=k).fit(self.knn_scaler.transform(candidates[feats]))
+        distances, indices = nn.kneighbors(self.knn_scaler.transform(query[feats]))
         out = []
         for dist, i in zip(distances[0], indices[0]):
             row = candidates.iloc[i]
@@ -123,7 +142,8 @@ class Estimator:
                 "city": row["city"],
                 "area_sqft": int(row["area_sqft"]),
                 "bedrooms": int(row["bedrooms"]),
-                "bathrooms": int(row["bathrooms"]),
+                "bathrooms": _optional_int(row.get("bathrooms")),
+                "property_type": row.get("property_type") if isinstance(row.get("property_type"), str) else "",
                 "price_lakh": round(float(row["price_lakh"]), 1),
                 "price": format_inr(float(row["price_lakh"])),
                 "price_per_sqft": int(round(row["price_lakh"] * 100_000 / row["area_sqft"])),
@@ -142,9 +162,8 @@ class Estimator:
         return self.clusters[cid]
 
     def pca_point(self, prop: dict, price_lakh: float) -> list[float]:
-        row = pd.DataFrame([{"log_area": np.log(prop["area_sqft"]), "bedrooms": prop["bedrooms"],
-                             "bathrooms": prop["bathrooms"], "balconies": prop["balconies"],
-                             "log_price": np.log(price_lakh)}])[PCA_FEATURES]
+        values = {"log_area": np.log(prop["area_sqft"]), "log_price": np.log(price_lakh)}
+        row = pd.DataFrame([{f: values[f] if f in values else prop[f] for f in self.features["pca"]}])
         xy = self.pca["pca"].transform(self.pca["scaler"].transform(row))[0]
         return [round(float(xy[0]), 3), round(float(xy[1]), 3)]
 

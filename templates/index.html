@@ -1,19 +1,34 @@
 {% extends "base.html" %}
 {% set nn = metrics.neural_network.test_metrics %}
 {% set ds = metrics.dataset %}
+{% set feats = est.features.model %}
+{% set is_listings = city != "bengaluru" %}
 {% block content %}
 
 <div class="row g-4">
   <div class="col-12">
     <h1 class="h3 mb-1">What might this home be worth?</h1>
+    <form method="get" action="{{ url_for('index') }}" class="d-flex flex-wrap align-items-center gap-2 my-2" id="city-form">
+      <label for="city-select" class="fw-semibold">City</label>
+      <select class="form-select w-auto" id="city-select" name="city">
+        {% for key, name in cities.items() %}<option value="{{ key }}" {% if key == city %}selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-outline-secondary btn-sm" type="submit">Switch</button>
+    </form>
     <p class="text-muted mb-2">
-      Enter a few details about a flat or house in <strong>{{ config.TRAINING_CITY }}</strong> and get an
-      indicative price from a neural network trained on {{ "{:,}".format(ds.rows_used) }} real historical listings,
+      Enter a few details about a flat or house in <strong>{{ spec.name }}</strong> and get an
+      indicative price from a neural network trained on {{ "{:,}".format(ds.rows_used) }} real
+      {% if is_listings %}Housing.com listings{% else %}historical listings{% endif %},
       plus the most similar recorded properties and the property group it belongs to.
     </p>
     <div class="small">
+      {% if is_listings %}
+      <span class="badge text-bg-success">Training data: current listings fetched {{ ds.fetched_to|nicetime }}</span>
+      {% else %}
       <span class="badge text-bg-secondary">Training data: historical</span>
-      {% if live.label == "live" %}
+      {% endif %}
+      {% if is_listings %}
+      {% elif live.label == "live" %}
         <span class="badge text-bg-success">Live listings: updated {{ live.last_success|nicetime }}</span>
       {% elif live.label == "cached" %}
         <span class="badge text-bg-warning">Live listings: cached copy from {{ live.last_success|nicetime }}</span>
@@ -38,15 +53,16 @@
         </div>
         {% endif %}
         <form method="post" action="{{ url_for('index') }}" id="estimate-form" novalidate>
+          <input type="hidden" name="city" value="{{ city }}">
           <div class="mb-3">
             <label class="form-label">City</label>
-            <input class="form-control" value="{{ config.TRAINING_CITY }}" disabled>
-            <div class="form-text">The training dataset only covers {{ config.TRAINING_CITY }}.</div>
+            <input class="form-control" value="{{ spec.name }}" disabled>
+            <div class="form-text">Use the City switch above to change city. Each city has its own model.</div>
           </div>
           <div class="mb-3">
             <label for="locality" class="form-label">Locality / area</label>
             <input class="form-control" id="locality" name="locality" list="locality-list" required maxlength="80"
-                   placeholder="e.g. Whitefield" value="{{ form.get('locality', '') }}" autocomplete="off">
+                   placeholder="e.g. {{ 'Andheri West' if city == 'mumbai' else 'Whitefield' }}" value="{{ form.get('locality', '') }}" autocomplete="off">
             <datalist id="locality-list">
               {% for loc in localities %}<option value="{{ loc }}">{% endfor %}
             </datalist>
@@ -57,6 +73,14 @@
             <input type="number" class="form-control" id="area_sqft" name="area_sqft" min="300" max="10000" step="1"
                    required value="{{ form.get('area_sqft', '1200') }}">
           </div>
+          {% if "property_type" in feats %}
+          <div class="mb-3">
+            <label for="property_type" class="form-label">Property type</label>
+            <select class="form-select" id="property_type" name="property_type">
+              {% for t in est.property_types %}<option {% if form.get('property_type') == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+            </select>
+          </div>
+          {% endif %}
           <div class="row g-2 mb-3">
             <div class="col-4">
               <label for="bedrooms" class="form-label">Bedrooms</label>
@@ -64,19 +88,24 @@
                 {% for n in range(1, 7) %}<option value="{{ n }}" {% if form.get('bedrooms', '2')|string == n|string %}selected{% endif %}>{{ n }} BHK</option>{% endfor %}
               </select>
             </div>
+            {% if "bathrooms" in feats %}
             <div class="col-4">
               <label for="bathrooms" class="form-label">Bathrooms</label>
               <select class="form-select" id="bathrooms" name="bathrooms">
                 {% for n in range(1, 8) %}<option value="{{ n }}" {% if form.get('bathrooms', '2')|string == n|string %}selected{% endif %}>{{ n }}</option>{% endfor %}
               </select>
             </div>
+            {% endif %}
+            {% if "balconies" in feats %}
             <div class="col-4">
               <label for="balconies" class="form-label">Balconies</label>
               <select class="form-select" id="balconies" name="balconies">
                 {% for n in range(0, 4) %}<option value="{{ n }}" {% if form.get('balconies', '1')|string == n|string %}selected{% endif %}>{{ n }}</option>{% endfor %}
               </select>
             </div>
+            {% endif %}
           </div>
+          {% if "area_type" in feats %}
           <div class="mb-3">
             <label for="area_type" class="form-label">How the size is measured</label>
             <select class="form-select" id="area_type" name="area_type">
@@ -86,6 +115,8 @@
             </select>
             <div class="form-text">Use "Plot Area" for an independent house measured by plot size.</div>
           </div>
+          {% endif %}
+          {% if "ready_to_move" in feats %}
           <div class="mb-3">
             <label for="ready_to_move" class="form-label">Availability</label>
             <select class="form-select" id="ready_to_move" name="ready_to_move">
@@ -93,8 +124,11 @@
               <option value="0" {% if form.get('ready_to_move') == '0' %}selected{% endif %}>Under construction / future possession</option>
             </select>
           </div>
+          {% endif %}
           <button class="btn btn-primary w-100" type="submit" id="submit-btn">Estimate price</button>
-          <p class="form-text mt-2 mb-0">Property age and furnishing are not asked because the dataset does not record them.</p>
+          <p class="form-text mt-2 mb-0">{% if is_listings %}Only the details the {{ spec.name }} listings record are asked
+            (bathrooms, balconies and possession status are not in them).{% else %}Property age and furnishing are not asked
+            because the dataset does not record them.{% endif %}</p>
         </form>
       </div>
     </div>
@@ -126,21 +160,23 @@
     <div class="card shadow-sm mb-4">
       <div class="card-body">
         <h2 class="h5">3 most similar recorded properties <span class="badge text-bg-light border fw-normal">KNN</span></h2>
-        <p class="small text-muted">Found with k-nearest neighbours using size, bedrooms and bathrooms
-          {%- if result.similar and result.similar[0].same_locality %} within {{ prop.locality }}{% else %} across {{ config.TRAINING_CITY }} (too few records in this locality){% endif %}.
-          Price is not used to find them. Prices shown are the recorded listing prices from the historical dataset.</p>
+        <p class="small text-muted">Found with k-nearest neighbours using size{% if "bathrooms" in feats %}, bedrooms and bathrooms{% else %} and bedrooms{% endif %}
+          {%- if result.similar and result.similar[0].same_locality %} within {{ prop.locality }}{% else %} across {{ spec.name }} (too few records in this locality){% endif %}.
+          Price is not used to find them. Prices shown are {{ ds.price_note }}.</p>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
-            <thead><tr><th>Locality</th><th>Size</th><th>Rooms</th><th class="text-end">Recorded price</th><th class="text-end">₹/sq ft</th></tr></thead>
+            <thead><tr><th>Locality</th><th>Size</th><th>Rooms</th><th class="text-end">{{ "Asking price" if is_listings else "Recorded price" }}</th><th class="text-end">₹/sq ft</th></tr></thead>
             <tbody>
               {% for s in result.similar %}
-              <tr><td>{{ s.locality }}</td><td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK, {{ s.bathrooms }} bath</td>
+              <tr><td>{% if is_listings and s.source_url %}<a href="{{ s.source_url }}" target="_blank" rel="noopener nofollow">{{ s.locality }}</a>{% else %}{{ s.locality }}{% endif %}</td>
+                  <td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK{% if s.bathrooms %}, {{ s.bathrooms }} bath{% endif %}{% if s.property_type %} {{ s.property_type|lower }}{% endif %}</td>
                   <td class="text-end">{{ s.price.lakh }}</td><td class="text-end">{{ "{:,}".format(s.price_per_sqft) }}</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-        <p class="small text-muted mb-0 mt-2">Source: <a href="{{ config.TRAINING_SOURCE_URL }}" target="_blank" rel="noopener">{{ config.TRAINING_SOURCE_NAME }}</a> · historical asking prices.</p>
+        <p class="small text-muted mb-0 mt-2">Source: <a href="{{ ds.source_url }}" target="_blank" rel="noopener">{{ ds.source }}</a>
+          {%- if is_listings and result.similar %} · fetched {{ result.similar[0].retrieved_at|nicetime }} · asking prices, not sale prices{% else %} · historical asking prices{% endif %}.</p>
 
         {% if result.live_similar %}
         <hr>
@@ -152,7 +188,7 @@
             <tbody>
               {% for s in result.live_similar %}
               <tr><td>{% if s.source_url %}<a href="{{ s.source_url }}" target="_blank" rel="noopener nofollow">{{ s.locality }}</a>{% else %}{{ s.locality }}{% endif %}</td>
-                  <td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK, {{ s.bathrooms }} bath</td>
+                  <td>{{ "{:,}".format(s.area_sqft) }} sq ft</td><td>{{ s.bedrooms }} BHK{% if s.bathrooms %}, {{ s.bathrooms }} bath{% endif %}</td>
                   <td class="text-end">{{ s.price.lakh }}</td></tr>
               {% endfor %}
             </tbody>
@@ -210,9 +246,9 @@
         <h2 class="h5">Property map in two dimensions <span class="badge text-bg-light border fw-normal">PCA</span></h2>
         <canvas id="pca-canvas" height="320" aria-label="PCA scatter plot of properties" role="img"></canvas>
         <div id="pca-legend" class="small mt-2"></div>
-        <p class="small text-muted mb-0 mt-2">Principal Component Analysis squeezes five scaled measurements (size, bedrooms,
-          bathrooms, balconies, price) into two axes that keep {{ ((metrics.pca.explained_variance_ratio[0] + metrics.pca.explained_variance_ratio[1]) * 100)|round|int }}%
-          of the variation, so similar homes appear close together. The diagonal bands appear because bedrooms and bathrooms are whole numbers. Colours are the K-Means groups.
+        <p class="small text-muted mb-0 mt-2">Principal Component Analysis squeezes {{ metrics.pca.features|length }} scaled measurements
+          ({{ metrics.pca.features|join(", ")|replace("log_area", "size")|replace("log_price", "price") }}) into two axes that keep {{ ((metrics.pca.explained_variance_ratio[0] + metrics.pca.explained_variance_ratio[1]) * 100)|round|int }}%
+          of the variation, so similar homes appear close together. Bands of dots appear because room counts are whole numbers. Colours are the K-Means groups.
           {% if result %}The black star is your property.{% endif %} The axes are combinations of features, not prices.</p>
       </div>
     </div>
@@ -244,11 +280,16 @@
     <div class="card shadow-sm h-100">
       <div class="card-body">
         <h2 class="h5">Data sources</h2>
-        <p class="small mb-2"><strong>Training data (historical):</strong>
-          <a href="{{ config.TRAINING_SOURCE_URL }}" target="_blank" rel="noopener">{{ config.TRAINING_SOURCE_NAME }}</a>,
-          licence {{ config.TRAINING_SOURCE_LICENSE }}. {{ "{:,}".format(ds.rows_raw) }} listings, {{ "{:,}".format(ds.rows_used) }} kept after
-          removing duplicates and invalid rows. Prices are past <em>asking</em> prices (roughly 2017–18), not sale prices and not today's market.
+        <p class="small mb-2"><strong>Training data ({{ "current listings" if is_listings else "historical" }}):</strong>
+          <a href="{{ ds.source_url }}" target="_blank" rel="noopener">{{ ds.source }}</a>.
+          {{ ds.license }}. {{ "{:,}".format(ds.rows_raw) }} listings, {{ "{:,}".format(ds.rows_used) }} kept after
+          removing duplicates and invalid rows. Prices are {{ ds.price_note }}.
+          {% if is_listings %}Listings fetched between {{ ds.fetched_from|nicetime }} and {{ ds.fetched_to|nicetime }}.{% endif %}
           Model trained {{ metrics.trained_at|nicetime }}.</p>
+        {% if is_listings %}
+        <p class="small mb-2"><strong>Updating:</strong> new {{ spec.name }} listings are fetched by the site owner with
+          <code>{{ spec.how_to_get_data }}</code> and the model is retrained; the website itself never calls Apify.</p>
+        {% else %}
         <p class="small mb-2"><strong>Live listings:</strong>
           {% if live.label == "live" %}{{ live.records }} listings from {{ live.source }}, last refreshed {{ live.last_success|nicetime }}.
           {% elif live.label == "cached" %}Showing a cached copy: {{ live.records }} listings from {{ live.source }}, last successful refresh {{ live.last_success|nicetime }}
@@ -256,7 +297,8 @@
           {% elif live.configured %}No live listings have been fetched yet{% if live.last_error %} (last attempt failed){% endif %}. Results use the historical dataset only.
           {% else %}Not configured on this server. Results use the historical dataset only.{% endif %}
         </p>
-        {% if refresh_enabled %}
+        {% endif %}
+        {% if refresh_enabled and not is_listings %}
         <details class="small">
           <summary>Admin: refresh live listings</summary>
           <form method="post" action="{{ url_for('refresh') }}" class="mt-2 d-flex gap-2">

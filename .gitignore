@@ -19,6 +19,9 @@ artifacts/*
 # Live data fetched from the API (licence does not allow redistribution)
 data/live/*
 !data/live/README.md
+# Mumbai listings fetched with your Apify token (Housing.com content, not redistributable)
+data/mumbai/*
+!data/mumbai/README.md
 
 # OS / editor
 .DS_Store

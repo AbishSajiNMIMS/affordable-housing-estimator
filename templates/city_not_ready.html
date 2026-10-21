@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<form method="get" action="{{ url_for('index') }}" class="d-flex flex-wrap align-items-center gap-2 mb-3" id="city-form">
+  <label for="city-select" class="fw-semibold">City</label>
+  <select class="form-select w-auto" id="city-select" name="city">
+    {% for key, name in cities.items() %}<option value="{{ key }}" {% if key == city %}selected{% endif %}>{{ name }}</option>{% endfor %}
+  </select>
+  <button class="btn btn-outline-secondary btn-sm" type="submit">Switch</button>
+</form>
+<div class="card shadow-sm"><div class="card-body">
+  <h1 class="h4">{{ spec.name }} is not set up on this server yet</h1>
+  <p>The {{ spec.name }} model is trained on current listings from
+    <a href="{{ spec.source_url }}" target="_blank" rel="noopener">{{ spec.source_name }}</a>.
+    Those listings have not been fetched and trained here yet, so no {{ spec.name }} estimate can be shown.
+    Nothing is made up in the meantime.</p>
+  {% if apify_status.last_error %}
+  <div class="alert alert-warning small">Last fetch attempt failed: {{ apify_status.last_error }}</div>
+  {% endif %}
+  <p class="mb-1">If you run this site, do this once:</p>
+  <ol class="mb-3">
+    <li>Put your Apify token in <code>.env</code> as <code>APIFY_TOKEN=...</code></li>
+    <li><code>{{ spec.how_to_get_data }}</code></li>
+    <li><code>python train_model.py --city {{ city }}</code>, then restart the app.</li>
+  </ol>
+  <a href="{{ url_for('index') }}" class="btn btn-primary">Use the Bengaluru estimator</a>
+</div></div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}

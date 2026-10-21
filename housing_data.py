@@ -4,8 +4,11 @@ The same validation rules are used for the historical training dataset and
 for live listings fetched from the API, so both end up in one schema:
 
     property_id, city, locality, area_sqft, bedrooms, bathrooms, balconies,
-    area_type, ready_to_move, price_lakh, price_per_sqft,
+    area_type, ready_to_move, property_type, price_lakh, price_per_sqft,
     source, source_url, retrieved_at
+
+Columns a source does not report are left empty (for example Mumbai
+listings have no bathroom or balcony counts).
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ SCHEMA = [
     "balconies",
     "area_type",
     "ready_to_move",
+    "property_type",
     "price_lakh",
     "price_per_sqft",
     "source",
@@ -110,10 +114,14 @@ def normalise_locality(value) -> str:
     return text.title() if text else ""
 
 
-def validate(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def validate(df: pd.DataFrame, max_price_lakh: float = MAX_PRICE_LAKH,
+             max_ppsf: float = MAX_PPSF,
+             min_sqft_per_bedroom: float = MIN_SQFT_PER_BEDROOM) -> tuple[pd.DataFrame, dict]:
     """Apply the validation rules to a frame already in SCHEMA form.
 
-    Returns the valid rows and a dict counting why rows were rejected.
+    The upper price limits can be raised per city (Mumbai is far more
+    expensive per sq ft than Bengaluru). Returns the valid rows and a dict
+    counting why rows were rejected.
     """
     reasons = {}
 
@@ -129,20 +137,29 @@ def validate(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     reject(df["price_lakh"].isna(), "missing price")
     reject(df["bedrooms"].isna(), "missing bedrooms")
     reject(~df["area_sqft"].between(MIN_AREA_SQFT, MAX_AREA_SQFT), "area out of range")
-    reject(~df["price_lakh"].between(MIN_PRICE_LAKH, MAX_PRICE_LAKH), "price out of range")
+    reject(~df["price_lakh"].between(MIN_PRICE_LAKH, max_price_lakh), "price out of range")
     reject(~df["bedrooms"].between(1, MAX_BEDROOMS), "bedrooms out of range")
-    reject(df["area_sqft"] / df["bedrooms"] < MIN_SQFT_PER_BEDROOM, "too small for bedroom count")
+    reject(df["area_sqft"] / df["bedrooms"] < min_sqft_per_bedroom, "too small for bedroom count")
     reject(df["bathrooms"].notna() & (df["bathrooms"] > df["bedrooms"] + 2), "implausible bathroom count")
     ppsf = df["price_lakh"] * 100_000 / df["area_sqft"]
-    reject(~ppsf.between(MIN_PPSF, MAX_PPSF), "price per sq ft out of range")
+    reject(~ppsf.between(MIN_PPSF, max_ppsf), "price per sq ft out of range")
 
     df = df.copy()
     df["price_per_sqft"] = (df["price_lakh"] * 100_000 / df["area_sqft"]).round(0)
     return df, reasons
 
 
-def load_training_dataset(path=None) -> tuple[pd.DataFrame, dict]:
-    """Read the Bengaluru CSV and return (clean frame, report)."""
+def validate_for_city(df: pd.DataFrame, city: str) -> tuple[pd.DataFrame, dict]:
+    spec = config.CITIES[city]
+    return validate(df, spec["max_price_lakh"], spec["max_price_per_sqft"], spec["min_sqft_per_bedroom"])
+
+
+def load_training_dataset(path=None, city: str = "bengaluru") -> tuple[pd.DataFrame, dict]:
+    """Return (clean frame, report) for one city's training data."""
+    if city == "mumbai":
+        return load_listings_dataset(path or config.CITIES["mumbai"]["data_path"], "mumbai")
+    if city != "bengaluru":
+        raise ValueError(f"Unknown city {city!r}. Choose from {sorted(config.CITIES)}")
     path = path or config.RAW_DATASET_PATH
     raw = pd.read_csv(path)
     required = {"area_type", "availability", "location", "size", "total_sqft", "bath", "balcony", "price"}
@@ -162,6 +179,7 @@ def load_training_dataset(path=None) -> tuple[pd.DataFrame, dict]:
             "balconies": pd.to_numeric(raw["balcony"], errors="coerce"),
             "area_type": raw["area_type"].map(normalise_area_type),
             "ready_to_move": raw["availability"].astype(str).str.strip().eq("Ready To Move").astype(int),
+            "property_type": "",  # not recorded in this dataset
             "price_lakh": pd.to_numeric(raw["price"], errors="coerce"),
             "source": config.TRAINING_SOURCE_NAME,
             "source_url": config.TRAINING_SOURCE_URL,
@@ -190,5 +208,39 @@ def load_training_dataset(path=None) -> tuple[pd.DataFrame, dict]:
         "rows_rejected": reasons,
         "rows_clean": len(df),
         "localities": int(df["locality"].nunique()),
+    }
+    return df, report
+
+
+def load_listings_dataset(path, city: str) -> tuple[pd.DataFrame, dict]:
+    """Read listings saved by apify_fetcher.py (already in SCHEMA form).
+
+    The fetcher validated them once; they are validated again here so a
+    hand-edited or older file cannot slip bad rows into training.
+    """
+    spec = config.CITIES[city]
+    try:
+        raw = pd.read_csv(path)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"No training data for {spec['name']} at {path}. Get it with: {spec['how_to_get_data']}"
+        ) from None
+    missing = set(SCHEMA) - set(raw.columns) - {"price_per_sqft"}
+    if missing:
+        raise ValueError(f"{path} is missing columns: {sorted(missing)}")
+    rows_raw = len(raw)
+    df = raw.drop_duplicates(subset=["property_id"])
+    duplicates = rows_raw - len(df)
+    df["property_type"] = df["property_type"].fillna("Other").astype(str)
+    df, reasons = validate_for_city(df, city)
+    df = df[SCHEMA].reset_index(drop=True)
+    report = {
+        "rows_raw": rows_raw,
+        "duplicates_removed": duplicates,
+        "rows_rejected": reasons,
+        "rows_clean": len(df),
+        "localities": int(df["locality"].nunique()),
+        "fetched_from": str(df["retrieved_at"].min()) if len(df) else None,
+        "fetched_to": str(df["retrieved_at"].max()) if len(df) else None,
     }
     return df, report

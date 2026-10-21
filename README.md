@@ -1,7 +1,7 @@
-# Affordable Housing Price Estimator (Bengaluru, India)
+# Affordable Housing Price Estimator (Bengaluru and Mumbai, India)
 
 A small, complete machine-learning website for a Foundations of Machine Learning (FOML) mini-project.
-A visitor enters a home's locality, size and rooms and gets:
+A visitor picks a city (**Bengaluru** or **Mumbai**), enters a home's locality, size and rooms and gets:
 
 1. an **estimated price** in rupees and lakh from a TensorFlow/Keras **neural network**,
 2. the **3 most similar recorded properties** found with **K-nearest neighbours (KNN)**,
@@ -28,6 +28,7 @@ without any cloud account, and deploys to AWS ECS Fargate with the files in this
 5. [Folder structure](#5-folder-structure)
 6. [Run it locally (step by step)](#6-run-it-locally-step-by-step)
 7. [Live data: API, caching and refresh](#7-live-data-api-caching-and-refresh)
+   - [Mumbai: current Housing.com listings via Apify](#7b-mumbai-current-housingcom-listings-via-apify)
 8. [Model training and evaluation](#8-model-training-and-evaluation)
 9. [Tests](#9-tests)
 10. [Docker](#10-docker)
@@ -68,7 +69,7 @@ matrices, hierarchical clustering). The implementation reuses these specific pat
 | **Lab 23** (NN on PCA components) | Comparing a model with a reference | Network compared with two simple non-ML baselines on the same test set | `train_model.py` |
 | **Lab 28 KNN** (`KNeighborsClassifier(n_neighbors=5)`) | Distance-based nearest neighbours | `NearestNeighbors(n_neighbors=3)` on scaled log-area, bedrooms, bathrooms (price excluded) to retrieve comparables. Same algorithm, used to *retrieve* neighbours instead of voting on a class | `estimator.py: similar_properties` |
 | **Lab 28 K-Means** (`KMeans(n_clusters, random_state)`, labels, centroids) | Clustering | K-Means (k = 4) on scaled log-area and log-price; groups renumbered 1-4 by median price | `train_model.py`, `estimator.py: cluster_for` |
-| **Lab 29** (elbow method, WCSS = `inertia_`) | Choosing k | WCSS for k = 1..8 saved in `artifacts/metrics.json` | `train_model.py` |
+| **Lab 29** (elbow method, WCSS = `inertia_`) | Choosing k | WCSS for k = 1..8 saved in `artifacts/<city>/metrics.json` | `train_model.py` |
 | **Labs 18-23 PCA** (centre data, covariance, eigenvectors, `PCA(...)`, `explained_variance_ratio_`, `transform`) | Dimensionality reduction | Five scaled features reduced to 2 components for a scatter plot; explained variance shown on the page | `train_model.py`, `static/js/app.js` |
 | **Labs 25-26 LDA** (class means, projection onto the discriminant axis) | Supervised projection / classification | `LinearDiscriminantAnalysis` classifies three price bands (tertiles of training prices); accuracy and confusion matrix reported | `train_model.py`, `estimator.py: price_band` |
 
@@ -165,6 +166,7 @@ affordable-housing-estimator/
 ├── train_model.py          cleaning → split → NN, K-Means, PCA, LDA → artifacts/ + metrics.json
 ├── housing_data.py         schema, parsing ("1133 - 1384" sq ft, "2 BHK"), validation rules
 ├── data_fetcher.py         Scrappa 99acres client: retries, validation, dedupe, cache, status
+├── apify_fetcher.py        Mumbai: Apify Housing.com scraper client (same safeguards)
 ├── config.py               every setting, overridable with environment variables
 ├── requirements.txt        pinned Python dependencies
 ├── Dockerfile              python:3.12-slim + gunicorn; trains during build
@@ -176,7 +178,8 @@ affordable-housing-estimator/
 ├── static/vendor/          Bootstrap 5.3.3 CSS (MIT), served locally
 ├── data/raw/               training CSV (CC0) + data/README.md provenance
 ├── data/live/              fetched live listings (git-ignored)
-├── artifacts/              generated models (git-ignored)
+├── data/mumbai/            Mumbai listings fetched with your Apify token (git-ignored)
+├── artifacts/<city>/       generated models, one folder per city (git-ignored)
 ├── scripts/                deploy_ecs.sh, cleanup_ecs.sh, create_secrets.sh,
 │                           smoke_test_docker.sh, refresh_live_data.sh, download_dataset.py
 ├── infra/                  ecs-fargate.yaml (CloudFormation), github-oidc-role.yaml,
@@ -287,6 +290,63 @@ With the free 500 credits/month and one city, refreshing every 6 hours uses abou
 
 Asking prices from listings are what sellers ask, not final transaction prices.
 
+## 7b. Mumbai: current Housing.com listings via Apify
+
+Mumbai has its **own** model, trained only on current Mumbai sale listings from Housing.com, fetched with the
+[Housing.com Scraper](https://apify.com/themineworks/housing-com-scraper) actor on Apify. Bengaluru is unchanged.
+Pick the city with the **City** selector at the top of the page.
+
+**What you need:** a free Apify account (no card needed; US$5 of credit each month). The scraper costs about
+US$0.001 per listing plus US$0.005 per run, so 1,000 listings cost roughly US$1.
+
+**Set it up once (local machine):**
+
+1. Sign up at <https://apify.com>, open **Settings → API & Integrations** and copy your **Personal API token**.
+2. Put it in your `.env` file (never in the code, never in Git, never in a chat):
+   ```
+   APIFY_TOKEN=apify_api_xxxxxxxx
+   ```
+3. Fetch today's listings (takes a few minutes while Apify scrapes):
+   ```bash
+   python apify_fetcher.py --max 1000
+   ```
+4. Train the Mumbai model (needs at least 300 valid listings):
+   ```bash
+   python train_model.py --city mumbai
+   ```
+5. Restart the app and choose **Mumbai**.
+
+Until steps 3-4 are done, the Mumbai page says "Mumbai is not set up on this server yet". No Mumbai price is
+shown and nothing is made up.
+
+**How it differs from Bengaluru**
+
+| | Bengaluru | Mumbai |
+|---|---|---|
+| Training data | Kaggle CSV, ~2017-18, committed (CC0) | Housing.com listings fetched on the date shown, git-ignored |
+| Form fields | locality, size, bedrooms, bathrooms, balconies, area type, availability | locality, size, bedrooms, property type (the scraper gives no bathroom/balcony counts) |
+| KNN "similar properties" | historical records | current listings, each linked to its Housing.com page |
+| Validation | max ₹50,000/sq ft, min 250 sq ft per bedroom | max ₹2,00,000/sq ft, min 150 sq ft per bedroom (carpet areas are small) |
+| Models | `artifacts/bengaluru/` | `artifacts/mumbai/` |
+
+**Safeguards (same ideas as the Scrappa client):** the token is only read from the environment and sent in an
+`Authorization` header, never to the browser; 3 retries with back-off for 429/5xx; clear messages for 401/402/403;
+rentals, commercial listings and rows with no price or area are rejected, never guessed; listings are de-duplicated
+by Housing.com id; the previous CSV is kept if a fetch fails; a second fetch within `MIN_REFRESH_INTERVAL_MINUTES`
+is skipped unless you pass `--force`; the raw response is kept in `data/mumbai/raw_cache/` for checking.
+The website itself never calls Apify.
+
+**To refresh:** run steps 3-4 again (for example once a week). New listings are merged with the old ones.
+
+**On AWS:** the Docker build runs `train_model.py --all`, which trains Mumbai **if** `data/mumbai/housing_com_mumbai.csv`
+exists in your folder when you build. So fetch locally first, then run `scripts/deploy_ecs.sh` again. A GitHub
+Actions deploy does not have that file (it is not in Git), so Mumbai will show "not set up" there.
+
+**Not verified yet:** the Apify actor publishes no formal output schema. The parser follows the field names on
+the actor's page (`price`, `price_label`, `area_sqft`, `carpet_area_sqft`, `bhk`, `address`, `property_type`,
+`listing_url`, `scraped_at`) and is tested with sample data of that shape, not with a real run. After your first
+fetch, check the "Rejected" counts the script prints; if almost everything is rejected, the field names differ.
+
 ## 8. Model training and evaluation
 
 `python train_model.py` options: `--epochs N` (default 200; early stopping usually stops after ~20),
@@ -343,7 +403,7 @@ python train_model.py --include-live      # uses them only if >= 200 valid Benga
 
 Live cards lack balconies, area type and possession status, so those are imputed and the rows are marked
 `(asking price; some features imputed)` in the `source` column. Mixing 2017-18 prices with current asking
-prices also changes what the model means; compare `artifacts/metrics.json` before and after.
+prices also changes what the model means; compare `artifacts/<city>/metrics.json` before and after.
 
 ## 9. Tests
 
@@ -491,7 +551,9 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 
 ## 14. Limitations
 
-* **One city.** The training data covers only Bengaluru, so the website only estimates Bengaluru properties.
+* **Two cities, two different datasets.** Bengaluru uses ~2017-18 listings; Mumbai uses listings fetched on the
+  date shown. Their estimates are not comparable with each other. Mumbai has fewer input features and its
+  quality depends on how many listings you fetch (1,000 is a small sample for a city that size).
 * **Old prices.** The listings are roughly 2017-18 asking prices. Bengaluru prices have risen since, so
   estimates are likely **below** today's market. NHB RESIDEX indices could be used to describe that trend, but
   applying an index to individual estimates was not done because it would add an unvalidated assumption.
@@ -510,6 +572,10 @@ VPC, roles and log group. Check *Billing → Bills* the next day to confirm noth
 | Problem | Fix |
 |---|---|
 | Page says "The estimator is not ready yet" | Run `python train_model.py`, then restart the app. |
+| "Mumbai is not set up on this server yet" | Follow [section 7b](#7b-mumbai-current-housingcom-listings-via-apify): set `APIFY_TOKEN`, run `apify_fetcher.py`, then `train_model.py --city mumbai`, restart. |
+| `APIFY_TOKEN is not set` | Add `APIFY_TOKEN=...` to `.env` in the project folder (same folder as `app.py`). |
+| "Apify token rejected (HTTP 401)" / "Not enough Apify credit (HTTP 402)" | Copy the token again from the Apify console / wait for next month's free credit. |
+| `Only N valid Mumbai listings; need at least 300` | Fetch more: `python apify_fetcher.py --max 1000 --force`. |
 | `No matching distribution found for tensorflow` | Your Python is too new (3.14) or 32-bit. Install 64-bit Python 3.12, delete the `.venv` folder, recreate it with `py -3.12 -m venv .venv` (Windows) or `python3.12 -m venv .venv`, then reinstall. On Apple Silicon use the native arm64 Python. |
 | "Live data is not configured" | Set `SCRAPPA_API_KEY` in `.env` (local) or create the secret and redeploy (AWS). |
 | "API key rejected (HTTP 401/403)" | Wrong key, or e-mail not verified at Scrappa. |

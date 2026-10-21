@@ -97,6 +97,14 @@
       });
     }
 
+    // Switching city reloads the page with that city's model.
+    var citySelect = document.getElementById("city-select");
+    if (citySelect) {
+      citySelect.addEventListener("change", function () {
+        citySelect.form.submit();
+      });
+    }
+
     var results = document.getElementById("results");
     if (results && window.innerWidth < 992) {
       results.scrollIntoView({ behavior: "smooth" });

@@ -15,8 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Train the models during the build so the running app never trains.
-# The dataset is in data/raw/ (CC0 licence), so no network access is needed.
-RUN python train_model.py --quiet
+# Bengaluru: the dataset is in data/raw/ (CC0 licence), no network needed.
+# Mumbai: trained only if data/mumbai/housing_com_mumbai.csv exists in the
+# build folder (run apify_fetcher.py before building); otherwise skipped
+# and the website shows Mumbai as "not set up yet".
+RUN python train_model.py --all --quiet
 
 # Run as a non-root user. data/live is where live listings are written;
 # on ECS an EFS volume is mounted there.

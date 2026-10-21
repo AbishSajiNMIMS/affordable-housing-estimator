@@ -8,5 +8,7 @@ __pycache__
 .pytest_cache
 artifacts/*
 data/live/*
+data/mumbai/raw_cache
+data/mumbai/*.json
 infra
 tests

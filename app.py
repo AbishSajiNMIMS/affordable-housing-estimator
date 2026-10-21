@@ -4,8 +4,8 @@ Start locally:   python app.py           (http://localhost:8000)
 In Docker/ECS:   gunicorn (see Dockerfile)
 
 Routes
-  GET  /              form (and results after a POST)
-  POST /              estimate a property
+  GET  /?city=mumbai  form for one city (and results after a POST)
+  POST /              estimate a property ("city" is a form field)
   POST /api/estimate  same as above, JSON in / JSON out
   POST /refresh       refresh live listings (needs REFRESH_TOKEN)
   GET  /health        health check for Docker and the ECS load balancer
@@ -19,6 +19,7 @@ from datetime import datetime
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 import config
+import apify_fetcher
 import data_fetcher
 from estimator import Estimator, ModelNotReady
 
@@ -36,20 +37,26 @@ def nicetime(value):
     except ValueError:
         return value
 
-_estimator: Estimator | None = None
-_estimator_error: str | None = None
+# One estimator per city, loaded once per process. A city whose model is not
+# trained yet maps to None and is shown as "not ready" on the website.
+_estimators: dict[str, Estimator | None] = {}
+_estimator_errors: dict[str, str] = {}
 
 
-def get_estimator() -> Estimator | None:
-    """Load the model artifacts once per process."""
-    global _estimator, _estimator_error
-    if _estimator is None and _estimator_error is None:
+def get_estimator(city: str = config.DEFAULT_CITY) -> Estimator | None:
+    if city not in _estimators:
         try:
-            _estimator = Estimator()
+            _estimators[city] = Estimator(city)
         except ModelNotReady as exc:
-            _estimator_error = str(exc)
-            log.error("Model not ready: %s", exc)
-    return _estimator
+            _estimators[city] = None
+            _estimator_errors[city] = str(exc)
+            log.warning("Model not ready: %s", exc)
+    return _estimators[city]
+
+
+def selected_city(values) -> str:
+    city = str(values.get("city") or config.DEFAULT_CITY).strip().lower()
+    return city if city in config.CITIES else config.DEFAULT_CITY
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +71,9 @@ LIMITS = {
 
 
 def parse_form(form, est: Estimator) -> tuple[dict, list[str]]:
+    """Validate only the fields this city's model uses."""
     errors, prop = [], {}
+    needed = set(est.features["model"])
     locality = (form.get("locality") or "").strip()
     if not locality:
         errors.append("Please enter a locality.")
@@ -73,6 +82,8 @@ def parse_form(form, est: Estimator) -> tuple[dict, list[str]]:
     prop["locality"] = est.canonical_locality(locality) or locality.title()
 
     for field, (lo, hi) in LIMITS.items():
+        if field not in needed:
+            continue
         raw = (form.get(field) or "").strip()
         label = field.replace("_", " ").replace("sqft", "(sq ft)")
         try:
@@ -84,19 +95,34 @@ def parse_form(form, est: Estimator) -> tuple[dict, list[str]]:
             errors.append(f"{label.capitalize()} must be between {lo} and {hi}.")
         prop[field] = value if field == "area_sqft" else int(value)
 
-    if "bedrooms" in prop and "area_sqft" in prop and prop["area_sqft"] / max(prop["bedrooms"], 1) < 250:
-        errors.append("That area is too small for the number of bedrooms (minimum 250 sq ft per bedroom).")
+    min_per_bedroom = est.spec["min_sqft_per_bedroom"]
+    if "bedrooms" in prop and "area_sqft" in prop and prop["area_sqft"] / max(prop["bedrooms"], 1) < min_per_bedroom:
+        errors.append(f"That area is too small for the number of bedrooms "
+                      f"(minimum {min_per_bedroom} sq ft per bedroom).")
 
-    area_type = form.get("area_type") or "Super built-up Area"
-    if area_type not in ("Super built-up Area", "Built-up Area", "Plot Area", "Carpet Area"):
-        errors.append("Please choose an area type from the list.")
-    prop["area_type"] = area_type
-    prop["ready_to_move"] = 1 if form.get("ready_to_move", "1") == "1" else 0
+    if "area_type" in needed:
+        area_type = form.get("area_type") or "Super built-up Area"
+        if area_type not in ("Super built-up Area", "Built-up Area", "Plot Area", "Carpet Area"):
+            errors.append("Please choose an area type from the list.")
+        prop["area_type"] = area_type
+    if "ready_to_move" in needed:
+        prop["ready_to_move"] = 1 if form.get("ready_to_move", "1") == "1" else 0
+    if "property_type" in needed:
+        property_type = form.get("property_type") or (est.property_types[0] if est.property_types else "")
+        if property_type not in est.property_types:
+            errors.append("Please choose a property type from the list.")
+        prop["property_type"] = property_type
     return prop, errors
 
 
-def live_pool_for_city():
-    """Validated live listings in the training city, or None."""
+def live_pool_for_city(city: str):
+    """Validated Scrappa live listings for Bengaluru, or None.
+
+    Mumbai needs no separate live pool: its model is trained on the
+    Housing.com listings themselves, so its KNN matches are current listings.
+    """
+    if city != "bengaluru":
+        return None
     live = data_fetcher.load_live_listings()
     if live.empty:
         return None
@@ -105,9 +131,14 @@ def live_pool_for_city():
     return live if len(live) else None
 
 
-def page_context(**extra):
-    est = get_estimator()
+def page_context(city: str, **extra):
+    est = get_estimator(city)
     ctx = {
+        "city": city,
+        "spec": config.CITIES[city],
+        "cities": {key: spec["name"] for key, spec in config.CITIES.items()},
+        "city_error": _estimator_errors.get(city),
+        "apify_status": apify_fetcher.read_status(city) if city in apify_fetcher.ACTOR_CITY else {},
         "est": est,
         "metrics": est.metrics if est else None,
         "localities": est.localities if est else [],
@@ -129,31 +160,38 @@ def page_context(**extra):
 # ---------------------------------------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    est = get_estimator()
+    city = selected_city(request.values)
+    est = get_estimator(city)
     if est is None:
-        return render_template("unavailable.html"), 503
+        if city == config.DEFAULT_CITY:
+            return render_template("unavailable.html"), 503
+        # Another city without a trained model: explain how to set it up.
+        return render_template("city_not_ready.html", **page_context(city)), 503
     if request.method == "GET":
-        return render_template("index.html", **page_context())
+        return render_template("index.html", **page_context(city))
 
     prop, errors = parse_form(request.form, est)
     if errors:
-        return render_template("index.html", **page_context(form=request.form, errors=errors)), 400
-    result = est.estimate(prop, live_pool=live_pool_for_city())
-    return render_template("index.html", **page_context(form=request.form, result=result, prop=prop))
+        return render_template("index.html", **page_context(city, form=request.form, errors=errors)), 400
+    result = est.estimate(prop, live_pool=live_pool_for_city(city))
+    return render_template("index.html", **page_context(city, form=request.form, result=result, prop=prop))
 
 
 @app.post("/api/estimate")
 def api_estimate():
-    est = get_estimator()
-    if est is None:
-        return jsonify({"error": "Model is not available yet."}), 503
     payload = request.get_json(silent=True) or {}
+    city = selected_city(payload)
+    est = get_estimator(city)
+    if est is None:
+        return jsonify({"error": f"The {config.CITIES[city]['name']} model is not available yet."}), 503
     prop, errors = parse_form({k: str(v) for k, v in payload.items()}, est)
     if errors:
         return jsonify({"errors": errors}), 400
-    result = est.estimate(prop, live_pool=live_pool_for_city())
+    result = est.estimate(prop, live_pool=live_pool_for_city(city))
     result.pop("pca_point", None)
-    return jsonify({"input": prop, "estimate": result, "live_data": data_fetcher.data_state(),
+    return jsonify({"city": city, "input": prop, "estimate": result,
+                    "training_data": est.metrics["dataset"].get("source"),
+                    "live_data": data_fetcher.data_state() if city == "bengaluru" else None,
                     "disclaimer": "Indicative machine-learning estimate, not an official valuation."})
 
 
@@ -169,8 +207,10 @@ def refresh():
 
 @app.get("/health")
 def health():
-    est = get_estimator()
-    body = {"status": "ok" if est else "model_missing", "live_data": data_fetcher.data_state()["label"]}
+    est = get_estimator(config.DEFAULT_CITY)
+    cities = {city: get_estimator(city) is not None for city in config.CITIES}
+    body = {"status": "ok" if est else "model_missing", "cities_ready": cities,
+            "live_data": data_fetcher.data_state()["label"]}
     return jsonify(body), 200 if est else 503
 
 

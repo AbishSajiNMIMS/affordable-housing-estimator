@@ -82,7 +82,7 @@
           </div>
           {% endif %}
           <div class="row g-2 mb-3">
-            <div class="col-4">
+            <div class="{{ 'col-4' if 'bathrooms' in feats else 'col-6' }}">
               <label for="bedrooms" class="form-label">Bedrooms</label>
               <select class="form-select" id="bedrooms" name="bedrooms">
                 {% for n in range(1, 7) %}<option value="{{ n }}" {% if form.get('bedrooms', '2')|string == n|string %}selected{% endif %}>{{ n }} BHK</option>{% endfor %}
@@ -190,7 +190,7 @@
                   · {{ "{:,}".format(s.area_sqft) }} sq ft</div>
                 <div class="small">{{ s.locality }}</div>
                 {% if is_listings and s.source_url %}
-                <a href="{{ s.source_url }}" class="small stretched-link" target="_blank" rel="noopener nofollow">View listing on Housing.com</a>
+                <a href="{{ s.source_url }}" class="small stretched-link d-inline-block py-2" target="_blank" rel="noopener nofollow">View listing on Housing.com</a>
                 {% endif %}
               </div>
             </div>
